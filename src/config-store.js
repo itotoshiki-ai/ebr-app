@@ -3,7 +3,7 @@ const path = require('path');
 
 const CONFIG_PATH = path.join(__dirname, '..', 'data', 'target-folder.json');
 const HISTORY_PATH = path.join(__dirname, '..', 'data', 'target-folder-history.json');
-const MAX_HISTORY = 4;
+const MAX_HISTORY = 6;
 
 // null => 自分のOneDrive直下 (ONEDRIVE_TARGET_FOLDER) を使う
 // { driveId, itemId, name } => 指定した共有フォルダ配下 (ONEDRIVE_TARGET_FOLDERはその中の相対パスとして扱う)
@@ -37,7 +37,8 @@ function saveColumnMapping(columnMapping) {
   saveTargetFolder({ ...current, columnMapping });
 }
 
-// 過去に選択した保存先(最大4件)をMRU順で記憶し、ラジオボタンでの素早い切り替えに使う。
+// 過去に選択した保存先(最大MAX_HISTORY件)を記憶し、ラジオボタンでの素早い切り替えに使う。
+// 表示順は選択状況に関わらずフォルダ名の昇順で固定(saveHistory参照)。
 // entry: { mode: 'own' } または { mode: 'shared', driveId, itemId, name, columnMapping }
 function historyKey(entry) {
   return entry.mode === 'own' ? 'own' : `${entry.driveId}:${entry.itemId}`;
@@ -53,9 +54,19 @@ function loadHistory() {
   }
 }
 
+// ラジオボタンでの表示順は選択状況に関わらず、上位フォルダ名を含むフルパスの昇順で
+// 固定する(「自分のOneDrive」もこの並びに含める)。fullPathが未取得(未サインイン等)の
+// 間はフォルダ名単体でソートし、後から取得できた時点で並びも入れ替わる。
+function historySortLabel(entry) {
+  return entry.mode === 'own' ? '自分のOneDrive' : entry.fullPath || entry.name || '';
+}
+
 function saveHistory(list) {
+  const sorted = list
+    .slice(0, MAX_HISTORY)
+    .sort((a, b) => historySortLabel(a).localeCompare(historySortLabel(b), 'ja'));
   fs.mkdirSync(path.dirname(HISTORY_PATH), { recursive: true });
-  fs.writeFileSync(HISTORY_PATH, JSON.stringify(list.slice(0, MAX_HISTORY), null, 2), 'utf8');
+  fs.writeFileSync(HISTORY_PATH, JSON.stringify(sorted, null, 2), 'utf8');
 }
 
 // 同じ保存先(mode+driveId+itemId)が既に記憶されていれば、その項目を残したまま
@@ -106,7 +117,7 @@ function addOrReplaceHistory(entry, previousEntry) {
   if (prevIdx >= 0) {
     list.splice(prevIdx, 1);
   } else {
-    list.pop(); // 直前の保存先が見つからない場合のフォールバック: 最も古いものを外す
+    list.pop(); // 直前の保存先が見つからない場合のフォールバック: いずれか1件を外す(表示順はsaveHistoryで昇順に整列される)
   }
   list.unshift(entry);
   const capped = list.slice(0, MAX_HISTORY);
