@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>電子帳簿保存</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header>
+    <h1>電子帳簿保存</h1>
+    <div id="authArea" class="auth-area">
+      <span id="authStatus">確認中...</span>
+      <a id="loginBtn" href="/auth/login" class="btn" hidden>Microsoft365にサインイン</a>
+      <a id="logoutBtn" href="/auth/logout" class="btn btn-secondary" hidden>サインアウト</a>
+    </div>
+  </header>
+
+  <main>
+    <section id="targetFolderArea" class="target-folder">
+      <span>保存先: <strong id="targetFolderLabel">確認中...</strong></span>
+      <button type="button" id="changeTargetBtn" class="btn btn-secondary">変更</button>
+      <button type="button" id="refreshVendorListBtn" class="btn btn-secondary" hidden>選択肢リストを更新</button>
+    </section>
+    <p id="columnMappingStatus" class="hint" hidden></p>
+
+    <section id="folderPickerArea" class="folder-picker" hidden>
+      <div class="link-picker">
+        <label for="shareLinkInput">共有リンクから設定(推奨)</label>
+        <p class="hint">
+          OneDriveで対象フォルダを開き「共有」→「リンクをコピー」で取得したURLを貼り付けてください。
+        </p>
+        <div class="link-picker-row">
+          <input type="url" id="shareLinkInput" placeholder="https://xxx-my.sharepoint.com/:f:/g/..." />
+          <button type="button" id="useShareLinkBtn" class="btn">設定</button>
+        </div>
+      </div>
+
+      <details>
+        <summary>一覧から選ぶ(利用できない環境があります)</summary>
+        <p class="hint">「自分に共有」一覧を取得します(組織によっては動作しない場合があります)。</p>
+        <button type="button" id="loadSharedListBtn" class="btn btn-secondary">一覧を取得</button>
+        <div id="folderPickerList" class="folder-picker-list"></div>
+      </details>
+
+      <div class="actions">
+        <button type="button" id="useOwnDriveBtn" class="btn btn-secondary">自分のOneDriveを使う</button>
+        <button type="button" id="closePickerBtn" class="btn btn-secondary">閉じる</button>
+      </div>
+    </section>
+
+    <label class="skip-extract-toggle">
+      <input type="checkbox" id="skipExtractCheckbox" />
+      スキャンをスキップして手動入力する(一時的に文字認識を無効化)
+    </label>
+
+    <section id="dropZone" class="drop-zone">
+      <p>証憑画像(JPEG / PNG)またはPDFをここにドラッグ&ドロップ、またはクリックして選択</p>
+      <input id="fileInput" type="file" accept="image/jpeg,image/png,application/pdf" hidden />
+    </section>
+
+    <section id="statusArea" class="status" hidden></section>
+
+    <section id="previewArea" class="preview" hidden>
+      <img id="previewImg" alt="プレビュー" hidden />
+      <div id="previewPdf" class="preview-pdf" hidden>
+        <p class="hint">PDFファイル: <span id="pdfName"></span></p>
+        <embed id="previewPdfEmbed" type="application/pdf" />
+      </div>
+    </section>
+
+    <section id="reviewArea" class="review" hidden>
+      <form id="reviewForm">
+        <label>
+          取引年月日
+          <input type="date" id="fieldDate" required />
+        </label>
+        <label>
+          取引先
+          <select id="fieldVendorSelect" hidden></select>
+          <input type="text" id="fieldVendor" list="vendorChoicesList" placeholder="例: 株式会社サンプル" required />
+          <datalist id="vendorChoicesList"></datalist>
+        </label>
+        <p id="vendorNoMatchHint" class="hint" hidden>
+          AIが抽出した取引先がリストにありません。プルダウンから選び直してください。
+        </p>
+        <label>
+          取引金額 (円)
+          <input type="number" id="fieldAmount" placeholder="例: 12000" required />
+        </label>
+        <p class="hint">税抜き金額を入力してください(自動抽出でも税抜き金額を優先して取得します)。</p>
+        <p class="hint">文字認識による自動抽出結果です。内容を確認し、必要に応じて修正してから保存してください。</p>
+
+        <hr />
+        <p class="hint">
+          書類種別は文字認識で自動判定を試みます(領収書/請求書/見積書など)。それ以外は自動抽出されません。
+          必要に応じて修正・入力してください(選択肢はOneDriveの設定から取得します)。
+        </p>
+        <label>
+          授受区分
+          <select id="fieldExchangeTypeSelect" hidden></select>
+          <input type="text" id="fieldExchangeType" list="exchangeTypeChoicesList" placeholder="例: 受領 / 交付" required />
+          <datalist id="exchangeTypeChoicesList"></datalist>
+        </label>
+        <p id="exchangeTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+        <label>
+          書類種別
+          <select id="fieldDocumentTypeSelect" hidden></select>
+          <input type="text" id="fieldDocumentType" list="documentTypeChoicesList" placeholder="例: 領収書 / 請求書 / 契約書" required />
+          <datalist id="documentTypeChoicesList"></datalist>
+        </label>
+        <p id="documentTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+        <label>
+          開始日または締日
+          <input type="date" id="fieldPeriodDate" required />
+        </label>
+        <p class="hint">
+          【開始日を入力する書類】<br />
+          見積依頼書、見積書、基本契約書、個別契約書、覚書、派遣先管理台帳、派遣元管理台帳、就業条件明示書、機密保持契約書、注文書、注文請書<br />
+          【締日を入力する書類】※但し、現金払いの場合は支払日<br />
+          納品書、検収書、請求書、領収書
+        </p>
+        <label>
+          授受手段
+          <select id="fieldExchangeMethodSelect" hidden></select>
+          <input type="text" id="fieldExchangeMethod" list="exchangeMethodChoicesList" placeholder="例: 紙(スキャナ保存) / 電子メール / EDI" required />
+          <datalist id="exchangeMethodChoicesList"></datalist>
+        </label>
+        <p id="exchangeMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+        <label>
+          ファイル名(拡張子は自動付与)
+          <input type="text" id="fieldFileName" />
+        </label>
+        <div class="actions">
+          <button type="submit" class="btn">OneDriveに保存</button>
+          <button type="button" id="cancelBtn" class="btn btn-secondary">キャンセル</button>
+        </div>
+      </form>
+    </section>
+
+    <section id="resultArea" class="result" hidden>
+      <p>保存が完了しました。</p>
+      <div class="result-link-row">
+        <input id="resultFileNameText" type="text" readonly onclick="this.select()">
+        <button type="button" id="copyFileNameBtn" class="btn btn-secondary btn-small">コピー</button>
+      </div>
+      <div class="result-link-row">
+        <a id="resultLink" href="#" target="_blank" rel="noopener">ファイルを開く</a>
+        <input id="resultLinkText" type="text" readonly onclick="this.select()">
+        <button type="button" id="copyResultLinkBtn" class="btn btn-secondary btn-small">コピー</button>
+      </div>
+      <div class="result-link-row" id="propertiesLinkRow" hidden>
+        <a id="propertiesLink" href="#" target="_blank" rel="noopener">プロパティを開く</a>
+        <input id="propertiesLinkText" type="text" readonly onclick="this.select()">
+        <button type="button" id="copyPropertiesLinkBtn" class="btn btn-secondary btn-small">コピー</button>
+      </div>
+      <div class="saved-description">
+        <strong>OneDriveに設定されたプロパティ:</strong>
+        <p id="savedDescriptionText"></p>
+      </div>
+      <p id="columnsWrittenText" class="hint" hidden></p>
+      <p id="versionsResetText" class="hint" hidden></p>
+      <button type="button" id="resetBtn" class="btn">続けて別の証憑を取り込む</button>
+    </section>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>
