@@ -31,6 +31,16 @@ const fieldExchangeMethod = document.getElementById('fieldExchangeMethod');
 const fieldExchangeMethodSelect = document.getElementById('fieldExchangeMethodSelect');
 const exchangeMethodChoicesList = document.getElementById('exchangeMethodChoicesList');
 const exchangeMethodNoMatchHint = document.getElementById('exchangeMethodNoMatchHint');
+const fieldPaymentMethod = document.getElementById('fieldPaymentMethod');
+const fieldPaymentMethodSelect = document.getElementById('fieldPaymentMethodSelect');
+const paymentMethodChoicesList = document.getElementById('paymentMethodChoicesList');
+const paymentMethodNoMatchHint = document.getElementById('paymentMethodNoMatchHint');
+const fieldPaymentDate = document.getElementById('fieldPaymentDate');
+const fieldJournalStatus = document.getElementById('fieldJournalStatus');
+const fieldJournalStatusSelect = document.getElementById('fieldJournalStatusSelect');
+const journalStatusChoicesList = document.getElementById('journalStatusChoicesList');
+const journalStatusNoMatchHint = document.getElementById('journalStatusNoMatchHint');
+const fieldRemarks = document.getElementById('fieldRemarks');
 const fieldFileName = document.getElementById('fieldFileName');
 const cancelBtn = document.getElementById('cancelBtn');
 const resultArea = document.getElementById('resultArea');
@@ -67,8 +77,11 @@ let currentUploadId = null;
 let fileNameIsDefault = true;
 
 // SharePoint側の設定に応じて、入力欄を「選択式(自由入力不可)」「候補付き自由入力」
-// 「素の自由入力」に切り替える汎用ヘルパー。取引先・授受区分・書類種別・授受手段で共通利用する。
-function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
+// 「素の自由入力」に切り替える汎用ヘルパー。取引先・授受区分・書類種別・授受手段・
+// 支払方法・仕訳状況で共通利用する。
+// required: falseにすると必須入力にしない(任意項目用)。
+// defaultToFirstChoice: trueだと、値が空の状態で選択肢が取得できた時に先頭の選択肢を初期値にする。
+function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl, required = true, defaultToFirstChoice = false }) {
   let choices = [];
   let allowsFreeText = null; // null = 選択肢列ではない(自由入力の文字列項目 or 未検出)
 
@@ -91,8 +104,8 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
     // 「非表示かつrequiredで空」の要素があるとブラウザがフォーカスできずに
     // 検証全体が失敗する(reportValidityがfalseのまま何も起きなくなる)ため、
     // 表示されている方にだけrequiredを付け替える。
-    selectEl.required = strictSelect;
-    textEl.required = !strictSelect;
+    selectEl.required = required && strictSelect;
+    textEl.required = required && !strictSelect;
 
     if (strictSelect) {
       selectEl.innerHTML = '';
@@ -116,7 +129,11 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
     choices = newChoices || [];
     allowsFreeText = newAllowsFreeText != null ? newAllowsFreeText : null;
     apply();
-    if (previousValue) setValue(previousValue);
+    if (previousValue) {
+      setValue(previousValue);
+    } else if (defaultToFirstChoice && choices.length > 0) {
+      setValue(choices[0]);
+    }
   }
 
   function setValue(value) {
@@ -130,6 +147,12 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
     }
   }
 
+  // アップロードのリセット時に使う。defaultToFirstChoiceが有効なら先頭の選択肢に戻し、
+  // それ以外は空にする。
+  function resetValue() {
+    setValue(defaultToFirstChoice && choices.length > 0 ? choices[0] : '');
+  }
+
   function getValue() {
     return isStrictSelect() ? selectEl.value : textEl.value;
   }
@@ -138,7 +161,7 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
     return choices.length > 0;
   }
 
-  return { setChoices, setValue, getValue, hasChoices };
+  return { setChoices, setValue, getValue, hasChoices, resetValue };
 }
 
 const vendorField = createChoiceField({
@@ -164,6 +187,21 @@ const exchangeMethodField = createChoiceField({
   textEl: fieldExchangeMethod,
   datalistEl: exchangeMethodChoicesList,
   noMatchHintEl: exchangeMethodNoMatchHint,
+});
+const paymentMethodField = createChoiceField({
+  selectEl: fieldPaymentMethodSelect,
+  textEl: fieldPaymentMethod,
+  datalistEl: paymentMethodChoicesList,
+  noMatchHintEl: paymentMethodNoMatchHint,
+  required: false,
+});
+const journalStatusField = createChoiceField({
+  selectEl: fieldJournalStatusSelect,
+  textEl: fieldJournalStatus,
+  datalistEl: journalStatusChoicesList,
+  noMatchHintEl: journalStatusNoMatchHint,
+  required: false,
+  defaultToFirstChoice: true,
 });
 
 function showStatus(message, isError = false) {
@@ -246,6 +284,10 @@ function resetToDropZone() {
   documentTypeField.setValue('');
   fieldPeriodDate.value = '';
   exchangeMethodField.setValue('');
+  paymentMethodField.setValue('');
+  fieldPaymentDate.value = '';
+  journalStatusField.resetValue();
+  fieldRemarks.value = '';
   fieldFileName.value = '';
   fileNameIsDefault = true;
 }
@@ -318,6 +360,10 @@ async function handleFile(file) {
     documentTypeField.setValue(data.documentType || '');
     fieldPeriodDate.value = '';
     exchangeMethodField.setValue('');
+    paymentMethodField.setValue('');
+    fieldPaymentDate.value = '';
+    journalStatusField.resetValue();
+    fieldRemarks.value = '';
     fieldFileName.value = buildDefaultFileNameBase(data.date, data.vendor);
     fileNameIsDefault = true;
 
@@ -365,6 +411,10 @@ function buildSavePayload(overwrite) {
     documentType: documentTypeField.getValue(),
     periodDate: fieldPeriodDate.value,
     exchangeMethod: exchangeMethodField.getValue(),
+    paymentMethod: paymentMethodField.getValue(),
+    paymentDate: fieldPaymentDate.value,
+    journalStatus: journalStatusField.getValue(),
+    remarks: fieldRemarks.value,
     fileName: fieldFileName.value,
     overwrite: !!overwrite,
   };
@@ -522,11 +572,15 @@ async function refreshTargetFolder() {
       exchangeTypeField.setChoices(mapping && mapping.exchangeTypeChoices, mapping && mapping.exchangeTypeAllowsFreeText);
       documentTypeField.setChoices(mapping && mapping.documentTypeChoices, mapping && mapping.documentTypeAllowsFreeText);
       exchangeMethodField.setChoices(mapping && mapping.exchangeMethodChoices, mapping && mapping.exchangeMethodAllowsFreeText);
+      paymentMethodField.setChoices(mapping && mapping.paymentMethodChoices, mapping && mapping.paymentMethodAllowsFreeText);
+      journalStatusField.setChoices(mapping && mapping.journalStatusChoices, mapping && mapping.journalStatusAllowsFreeText);
       refreshVendorListBtn.hidden = !(
         vendorField.hasChoices() ||
         exchangeTypeField.hasChoices() ||
         documentTypeField.hasChoices() ||
-        exchangeMethodField.hasChoices()
+        exchangeMethodField.hasChoices() ||
+        paymentMethodField.hasChoices() ||
+        journalStatusField.hasChoices()
       );
     } else {
       targetFolderLabel.textContent = '自分のOneDrive';
@@ -535,6 +589,8 @@ async function refreshTargetFolder() {
       exchangeTypeField.setChoices([], null);
       documentTypeField.setChoices([], null);
       exchangeMethodField.setChoices([], null);
+      paymentMethodField.setChoices([], null);
+      journalStatusField.setChoices([], null);
       refreshVendorListBtn.hidden = true;
     }
   } catch (err) {
@@ -552,7 +608,9 @@ async function detectColumns() {
     const extraChoiceCount =
       (data.mapping.exchangeTypeChoices || []).length +
       (data.mapping.documentTypeChoices || []).length +
-      (data.mapping.exchangeMethodChoices || []).length;
+      (data.mapping.exchangeMethodChoices || []).length +
+      (data.mapping.paymentMethodChoices || []).length +
+      (data.mapping.journalStatusChoices || []).length;
     if (found.length === 3 && choiceCount > 0) {
       showStatus(
         data.mapping.vendorAllowsFreeText === false

@@ -129,6 +129,33 @@
           <datalist id="exchangeMethodChoicesList"></datalist>
         </label>
         <p id="exchangeMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+
+        <hr />
+        <p class="hint">以下は任意項目です(未入力のまま保存できます)。</p>
+        <label>
+          支払方法
+          <select id="fieldPaymentMethodSelect" hidden></select>
+          <input type="text" id="fieldPaymentMethod" list="paymentMethodChoicesList" placeholder="例: 現金 / 振込 / クレジットカード" />
+          <datalist id="paymentMethodChoicesList"></datalist>
+        </label>
+        <p id="paymentMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+        <label>
+          支払日
+          <input type="date" id="fieldPaymentDate" />
+        </label>
+        <label>
+          仕訳状況
+          <select id="fieldJournalStatusSelect" hidden></select>
+          <input type="text" id="fieldJournalStatus" list="journalStatusChoicesList" placeholder="例: 未仕訳 / 仕訳済み" />
+          <datalist id="journalStatusChoicesList"></datalist>
+        </label>
+        <p id="journalStatusNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+        <label>
+          備考
+          <input type="text" id="fieldRemarks" placeholder="任意のメモ" />
+        </label>
+
+        <hr />
         <label>
           ファイル名(拡張子は自動付与)
           <input type="text" id="fieldFileName" />

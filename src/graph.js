@@ -229,6 +229,10 @@ function guessColumnMapping(columns) {
   const documentTypeCol = findBy(['書類種別', '書類の種類'], ['text', 'choice']);
   const periodDateCol = findBy(['開始日又は締日', '開始日または締日', '締日', '開始日'], ['dateTime']);
   const exchangeMethodCol = findBy(['授受手段'], ['text', 'choice']);
+  const paymentMethodCol = findBy(['支払方法', '支払い方法'], ['text', 'choice']);
+  const paymentDateCol = findBy(['支払日'], ['dateTime']);
+  const journalStatusCol = findBy(['仕訳状況', '仕訳ステータス'], ['text', 'choice']);
+  const remarksCol = findBy(['備考'], ['text']);
 
   return {
     date: dateCol ? dateCol.name : null,
@@ -238,10 +242,16 @@ function guessColumnMapping(columns) {
     documentType: documentTypeCol ? documentTypeCol.name : null,
     periodDate: periodDateCol ? periodDateCol.name : null,
     exchangeMethod: exchangeMethodCol ? exchangeMethodCol.name : null,
+    paymentMethod: paymentMethodCol ? paymentMethodCol.name : null,
+    paymentDate: paymentDateCol ? paymentDateCol.name : null,
+    journalStatus: journalStatusCol ? journalStatusCol.name : null,
+    remarks: remarksCol ? remarksCol.name : null,
     vendorColumn: vendorCol || null,
     exchangeTypeColumn: exchangeTypeCol || null,
     documentTypeColumn: documentTypeCol || null,
     exchangeMethodColumn: exchangeMethodCol || null,
+    paymentMethodColumn: paymentMethodCol || null,
+    journalStatusColumn: journalStatusCol || null,
   };
 }
 
