@@ -106,8 +106,71 @@ npm start
 
 http://localhost:3000 を開き、「OneDriveにサインイン」→証憑ファイルをアップロード、の順で利用します。
 
+## 常時稼働サーバーへのデプロイ(社内の他PC/スマホからアクセスする場合)
+
+自分のPC以外の常時電源オンの専用マシンでこのアプリを稼働させ、社内の他端末からアクセスできる
+ようにする場合の手順です。
+
+### 1. Entra ID(Azure AD)はHTTPS必須
+
+リダイレクトURIに`localhost`以外を使う場合、Entra IDはHTTPSでないと登録を拒否します。
+そのため社内の他端末からアクセスするには、サーバーをHTTPSで待ち受けさせる必要があります。
+
+```
+node scripts/generate-cert.js <サーバーのホスト名> <サーバーのIPアドレス>
+# 例: node scripts/generate-cert.js ebr-server 192.168.1.50
+```
+
+`certs/cert.pem` / `certs/key.pem` が生成され、次回起動時から自動的にHTTPSで待ち受けます
+(`src/server.js`が起動時にこの2ファイルの有無を見て切り替えます)。
+
+自己署名証明書のため、各クライアント端末では初回アクセス時にブラウザの警告が出ます。
+警告を出したくない場合は、生成された`certs/cert.pem`を各端末の「信頼されたルート証明機関」に
+インポートしてください(社内のみで使う証明書なので、正規のCA証明書のように厳重な配布管理は
+不要ですが、ファイル自体は秘密鍵〈`key.pem`〉と違い機密情報ではありません)。
+
+### 2. `.env`の`REDIRECT_URI`とAzure Portal側を更新
+
+`.env`の`REDIRECT_URI`を、サーバーの実際のアドレスに変更します。
+
+```
+REDIRECT_URI=https://<サーバーのホスト名またはIP>:3000/auth/callback
+```
+
+Azure Portal側([アプリの登録] > 対象アプリ > [認証])でも、上記と全く同じURIを
+リダイレクトURIとして追加登録してください(1文字でも違うとサインインに失敗します)。
+
+### 3. Windowsファイアウォールでポートを開放
+
+サーバーPCで、PowerShellを管理者権限で実行します。
+
+```
+New-NetFirewallRule -DisplayName "ebr-app" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private
+```
+
+### 4. Windowsサービスとして常時稼働させる
+
+ユーザーがサインインしていなくても自動起動・クラッシュ時自動再起動するように、
+[NSSM](https://nssm.cc/download)を使ってWindowsサービス化することを推奨します。
+
+```
+nssm install ebr-app "C:\Program Files\nodejs\node.exe" "C:\path\to\ebr-app\src\server.js"
+nssm set ebr-app AppDirectory "C:\path\to\ebr-app"
+nssm set ebr-app Start SERVICE_AUTO_START
+nssm start ebr-app
+```
+
+サービスのログは既定でイベントログには出ないため、`nssm set ebr-app AppStdout`/`AppStderr`で
+ログファイルの出力先を指定しておくとトラブルシュートしやすくなります。
+
+### 補足: サインイン状態はサーバー再起動をまたいで保持される
+
+サインインセッション(`data/sessions.json`)とMicrosoftのトークンキャッシュ
+(`data/msal-token-cache.json`)はどちらもファイルに永続化されるため、サービスの再起動や
+サーバーの再起動をまたいでもサインインし直す必要はありません(リフレッシュトークンの
+有効期限が切れない限り)。
+
 ## 制限事項 (V1)
 
 - アップロード可能なファイルサイズは4MBまで(Microsoft Graphの単純アップロードAPIの上限)
 - 対応形式: JPEG / PNG / PDF
-- 認証セッションはサーバーのメモリ上に保持されるため、サーバー再起動後は再サインインが必要です
