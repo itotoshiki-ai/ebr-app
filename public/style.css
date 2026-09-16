@@ -83,6 +83,22 @@ main {
   font-size: 0.85rem;
 }
 
+.target-folder-history {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  padding: 0 14px;
+  font-size: 0.85rem;
+}
+.target-folder-history[hidden] { display: none; }
+
+.target-folder-history-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
 .folder-picker {
   border: 1px solid var(--border);
   border-radius: 12px;

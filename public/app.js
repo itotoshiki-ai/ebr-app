@@ -47,6 +47,7 @@ const savedDescriptionText = document.getElementById('savedDescriptionText');
 const resetBtn = document.getElementById('resetBtn');
 const targetFolderLabel = document.getElementById('targetFolderLabel');
 const changeTargetBtn = document.getElementById('changeTargetBtn');
+const targetFolderHistory = document.getElementById('targetFolderHistory');
 const folderPickerArea = document.getElementById('folderPickerArea');
 const folderPickerList = document.getElementById('folderPickerList');
 const useOwnDriveBtn = document.getElementById('useOwnDriveBtn');
@@ -109,9 +110,13 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl }) {
   }
 
   function setChoices(newChoices, newAllowsFreeText) {
+    // 選択肢の入れ替え(保存先フォルダの切り替え等)で、入力済みの値が消えないよう
+    // 一旦退避してから、新しい選択肢構成に合わせて入力欄へ戻す。
+    const previousValue = getValue();
     choices = newChoices || [];
     allowsFreeText = newAllowsFreeText != null ? newAllowsFreeText : null;
     apply();
+    if (previousValue) setValue(previousValue);
   }
 
   function setValue(value) {
@@ -445,10 +450,60 @@ reviewForm.addEventListener('submit', async (e) => {
   }
 });
 
+function renderTargetFolderHistory(history, current) {
+  targetFolderHistory.innerHTML = '';
+  if (!Array.isArray(history) || history.length < 2) {
+    targetFolderHistory.hidden = true;
+    return;
+  }
+  targetFolderHistory.hidden = false;
+  for (const entry of history) {
+    const label = document.createElement('label');
+    label.className = 'target-folder-history-item';
+
+    const radio = document.createElement('input');
+    radio.type = 'radio';
+    radio.name = 'targetFolderHistory';
+    radio.checked =
+      entry.mode === 'own'
+        ? current.mode === 'own'
+        : current.mode === 'shared' && current.driveId === entry.driveId && current.itemId === entry.itemId;
+    radio.addEventListener('change', () => selectHistoryTarget(entry));
+
+    const span = document.createElement('span');
+    span.textContent = entry.mode === 'own' ? '自分のOneDrive' : entry.fullPath || entry.name;
+
+    label.appendChild(radio);
+    label.appendChild(span);
+    targetFolderHistory.appendChild(label);
+  }
+}
+
+async function selectHistoryTarget(entry) {
+  try {
+    const body =
+      entry.mode === 'own' ? { mode: 'own' } : { mode: 'shared', driveId: entry.driveId, itemId: entry.itemId };
+    const res = await fetch('/api/target-folder/select', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.error || '保存先の切り替えに失敗しました');
+    }
+    await refreshTargetFolder();
+  } catch (err) {
+    showStatus(`エラー: ${err.message}`, true);
+  }
+}
+
 async function refreshTargetFolder() {
   try {
     const res = await fetch('/api/target-folder');
     const data = await res.json();
+    const current = { mode: data.mode, driveId: data.driveId, itemId: data.itemId };
+    renderTargetFolderHistory(data.history, current);
     if (data.mode === 'shared') {
       targetFolderLabel.textContent = `共有フォルダ「${data.fullPath || data.name}」`;
       const mapping = data.columnMapping;
