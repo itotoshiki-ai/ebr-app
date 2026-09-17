@@ -111,9 +111,67 @@ http://localhost:3000 を開き、「OneDriveにサインイン」→証憑フ�
 ## 常時稼働サーバーへのデプロイ(社内の他PC/スマホからアクセスする場合)
 
 自分のPC以外の常時電源オンの専用マシンでこのアプリを稼働させ、社内の他端末からアクセスできる
-ようにする場合の手順です。
+ようにする場合の手順です。以下はすべて**サーバー機(常時稼働させる専用PC)側**での作業です。
+開発機での追加作業はありません。
 
-### 1. Entra ID(Azure AD)はHTTPS必須
+### 1. サーバー機にGitとNode.jsをインストール
+
+WindowsにはGit・Node.jsは標準搭載されていないため、事前にインストールします。
+
+- Git: https://git-scm.com/download/win からインストーラーをダウンロードして実行(既定設定でOK)
+- Node.js: https://nodejs.org/ からLTS版(18以上)をダウンロードして実行
+
+インストール後、**新しくPowerShellを開き直して**(既存ウィンドウはPATH未反映のため)以下で認識されることを確認します。
+
+```
+git --version
+node --version
+```
+
+### 2. リポジトリをclone
+
+```
+git clone https://github.com/itotoshiki-ai/ebr-app.git C:\apps\ebr-app
+cd C:\apps\ebr-app
+```
+
+(このリポジトリはPublicのため、clone時にGitHubの認証は不要です)
+
+### 3. 依存パッケージをインストール
+
+```
+npm install
+```
+
+### 4. `.env`を作成して値を設定
+
+```
+copy .env.example .env
+```
+
+`.env`を開き、稼働中の環境と同じ`GOOGLE_VISION_API_KEY` / `OWN_COMPANY_NAME` / `AZURE_CLIENT_ID` /
+`AZURE_CLIENT_SECRET` / `AZURE_AUTHORITY_HOST`を設定します。`REDIRECT_URI`はこの時点では
+`http://localhost:3000/auth/callback`のままでかまいません(手順7でサーバー用に変更します)。
+
+### 5. サインイン・保存先フォルダは利用者ごとに個別(引き継ぎ不要)
+
+サインイン状態と保存先フォルダの設定(履歴含む)は、サーバー全体で共有される設定ファイルではなく、
+利用者(ブラウザ)ごとのセッションとして`data\sessions.json`に保存されます。ブラウザのCookieは
+アクセス先のアドレス(ドメイン/ポート)ごとに別々に発行される仕組み上、`http://localhost:3000`で
+使っていたセッションを`https://<サーバー>:3000`にそのまま引き継ぐことはできません。
+サーバー機での利用開始時は、利用者ごとに改めてブラウザでサインイン・保存先フォルダの選択を
+行ってください(他の利用者の設定に影響することはありません)。
+
+### 6. 動作確認(まずHTTPのまま)
+
+```
+npm start
+```
+
+サーバー機のブラウザで`http://localhost:3000`を開き、正常に起動・サインインできることを確認したら
+`Ctrl+C`で停止します。ここから先はHTTPS化と社内公開の設定です。
+
+### 7. Entra ID(Azure AD)はHTTPS必須
 
 リダイレクトURIに`localhost`以外を使う場合、Entra IDはHTTPSでないと登録を拒否します。
 そのため社内の他端末からアクセスするには、サーバーをHTTPSで待ち受けさせる必要があります。
@@ -131,7 +189,7 @@ node scripts/generate-cert.js <サーバーのホスト名> <サーバーのIP�
 インポートしてください(社内のみで使う証明書なので、正規のCA証明書のように厳重な配布管理は
 不要ですが、ファイル自体は秘密鍵〈`key.pem`〉と違い機密情報ではありません)。
 
-### 2. `.env`の`REDIRECT_URI`とAzure Portal側を更新
+### 8. `.env`の`REDIRECT_URI`とAzure Portal側を更新
 
 `.env`の`REDIRECT_URI`を、サーバーの実際のアドレスに変更します。
 
@@ -142,7 +200,7 @@ REDIRECT_URI=https://<サーバーのホスト名またはIP>:3000/auth/callback
 Azure Portal側([アプリの登録] > 対象アプリ > [認証])でも、上記と全く同じURIを
 リダイレクトURIとして追加登録してください(1文字でも違うとサインインに失敗します)。
 
-### 3. Windowsファイアウォールでポートを開放
+### 9. Windowsファイアウォールでポートを開放
 
 サーバーPCで、PowerShellを管理者権限で実行します。
 
@@ -150,14 +208,14 @@ Azure Portal側([アプリの登録] > 対象アプリ > [認証])でも、上�
 New-NetFirewallRule -DisplayName "ebr-app" -Direction Inbound -Protocol TCP -LocalPort 3000 -Action Allow -Profile Private
 ```
 
-### 4. Windowsサービスとして常時稼働させる
+### 10. Windowsサービスとして常時稼働させる
 
 ユーザーがサインインしていなくても自動起動・クラッシュ時自動再起動するように、
 [NSSM](https://nssm.cc/download)を使ってWindowsサービス化することを推奨します。
 
 ```
-nssm install ebr-app "C:\Program Files\nodejs\node.exe" "C:\path\to\ebr-app\src\server.js"
-nssm set ebr-app AppDirectory "C:\path\to\ebr-app"
+nssm install ebr-app "C:\Program Files\nodejs\node.exe" "C:\apps\ebr-app\src\server.js"
+nssm set ebr-app AppDirectory "C:\apps\ebr-app"
 nssm set ebr-app Start SERVICE_AUTO_START
 nssm start ebr-app
 ```
