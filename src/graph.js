@@ -385,9 +385,11 @@ async function copyItemAndWait(accessToken, sourceDriveItem, destDriveId, destFo
 // アイテムに紐づくSharePointリストアイテムの「プロパティ(項目の表示)」画面のURLを取得する。
 // listItemのwebUrlはドキュメントライブラリの場合ファイル自体のURLと同じ値になってしまい
 // プロパティ画面を指さないため、ライブラリのURL(list.webUrl)とリストアイテムの番号(listItem.id)
-// から、SharePoint標準のDispForm.aspx(項目のプロパティを表示するフォーム)のURLを組み立てる。
-// 個人用OneDrive/SharePointいずれもバックエンドはSharePointリストのため取得できるが、
-// あくまで補助情報なので、取得に失敗しても保存自体は失敗させない(呼び出し側でnullを許容)。
+// から、SharePoint標準のフォームのURLを組み立てる。デフォルトはDispForm.aspx(表示専用)だが、
+// .envの`PROPERTIES_LINK_MODE=edit`でEditForm.aspx(値を直接編集して保存できるフォーム)に
+// 切り替え可能。個人用OneDrive/SharePointいずれもバックエンドはSharePointリストのため
+// 取得できるが、あくまで補助情報なので、取得に失敗しても保存自体は失敗させない
+// (呼び出し側でnullを許容)。
 async function getListItemPropertiesUrl(accessToken, driveItem) {
   const driveId = driveItem.parentReference && driveItem.parentReference.driveId;
   if (!driveId) return null;
@@ -402,7 +404,8 @@ async function getListItemPropertiesUrl(accessToken, driveItem) {
   const listItem = await itemRes.json();
   if (!list.webUrl || !listItem.id) return null;
 
-  return `${list.webUrl}/Forms/DispForm.aspx?ID=${listItem.id}`;
+  const formName = process.env.PROPERTIES_LINK_MODE === 'edit' ? 'EditForm.aspx' : 'DispForm.aspx';
+  return `${list.webUrl}/Forms/${formName}?ID=${listItem.id}`;
 }
 
 module.exports = {
