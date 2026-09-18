@@ -239,6 +239,12 @@ function decodeHtmlEntities(str) {
   return tmp.value;
 }
 
+function stripFileExtension(fileName) {
+  if (!fileName) return fileName;
+  const idx = fileName.lastIndexOf('.');
+  return idx > 0 ? fileName.slice(0, idx) : fileName;
+}
+
 async function copyTextToClipboard(text, button) {
   if (!text) return;
   try {
@@ -467,7 +473,7 @@ reviewForm.addEventListener('submit', async (e) => {
     clearStatus();
     reviewArea.hidden = true;
     resultArea.hidden = false;
-    resultFileNameText.value = data.name || '';
+    resultFileNameText.value = stripFileExtension(data.name || '');
     resultLink.href = data.webUrl;
     resultLink.textContent = 'ファイルを開く';
     resultLinkText.value = data.webUrl || '';
