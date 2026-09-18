@@ -226,6 +226,15 @@ New-NetFirewallRule -DisplayName "ebr-app" -Direction Inbound -Protocol TCP -Loc
 ユーザーがサインインしていなくても自動起動・クラッシュ時自動再起動するように、
 [NSSM](https://nssm.cc/download)を使ってWindowsサービス化することを推奨します。
 
+NSSMは単体の実行ファイルで配布されているため、事前に手動でダウンロード・配置しておきます。
+
+1. https://nssm.cc/download から最新版のzipをダウンロード
+2. 好きな場所に展開する（例: `C:\nssm`）。展開先に`win64\nssm.exe`（64bit環境用）がある
+3. 以降のコマンドを打ちやすくするため、`C:\nssm\win64`をシステムのPATHに追加しておく
+   （追加しない場合は`nssm`の代わりに`C:\nssm\win64\nssm.exe`とフルパスで指定する）
+
+PATHに追加したら、PowerShellを開き直してから以下を実行:
+
 ```
 nssm install ebr-app "C:\Program Files\nodejs\node.exe" "C:\apps\ebr-app\src\server.js"
 nssm set ebr-app AppDirectory "C:\apps\ebr-app"
