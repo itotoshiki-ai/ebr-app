@@ -408,6 +408,36 @@ async function getListItemPropertiesUrl(accessToken, driveItem) {
   return `${list.webUrl}/Forms/${formName}?ID=${listItem.id}`;
 }
 
+// driveItem.webUrl(個人用OneDriveの場合`/personal/{account}/Documents/...`という
+// ファイル自体への直リンク)は、実際にOneDrive/SharePointのフォルダ画面でファイルを
+// クリックして開いたときのURL(`/shared?...`、フォルダ表示の上にプレビューを重ねるSPAの
+// 状態URL)とは見た目も挙動も異なる。後者はviewId/FolderCTID等そのときの一覧表示状態に
+// 依存する値を含み再構築できないため、代わりにOneDriveが標準で提供している
+// `_layouts/15/onedrive.aspx?id=...&parent=...`という、クリック時と同じプレビュー画面を
+// 開く安定した形式のURLを組み立てる(id=ファイル自体の相対パス、parent=親フォルダの相対パス)。
+// 個人用OneDrive以外(SharePointサイトのドキュメントライブラリ等、パスに`/personal/`を
+// 含まない場合)はこの形式が使えないため、従来通りwebUrlをそのまま返す。
+function buildFileOpenUrl(driveItem) {
+  const webUrl = driveItem && driveItem.webUrl;
+  if (!webUrl) return webUrl || null;
+
+  try {
+    const url = new URL(webUrl);
+    const decodedPath = decodeURIComponent(url.pathname);
+    const segments = decodedPath.split('/').filter(Boolean);
+    // 例: ["personal", "share_management02_eureka03_onmicrosoft_com", "Documents", "電子帳簿(2026年度)", "file.pdf"]
+    if (segments[0] !== 'personal' || segments.length < 3) return webUrl;
+
+    const account = segments[1];
+    const parentPath = '/' + segments.slice(0, -1).join('/');
+
+    const params = new URLSearchParams({ id: decodedPath, parent: parentPath });
+    return `${url.origin}/personal/${account}/_layouts/15/onedrive.aspx?${params.toString()}`;
+  } catch (err) {
+    return webUrl;
+  }
+}
+
 module.exports = {
   ensureFolderPath,
   getItemFullPath,
@@ -426,4 +456,5 @@ module.exports = {
   deleteItem,
   copyItemAndWait,
   getListItemPropertiesUrl,
+  buildFileOpenUrl,
 };

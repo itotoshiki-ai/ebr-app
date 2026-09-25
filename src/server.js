@@ -30,6 +30,7 @@ const {
   deleteItem,
   copyItemAndWait,
   getListItemPropertiesUrl,
+  buildFileOpenUrl,
 } = require('./graph');
 const {
   loadTargetFolder,
@@ -344,10 +345,17 @@ app.post('/api/save', async (req, res) => {
       console.error('get listItem webUrl error', err);
     }
 
+    // ファイルを開くリンクは、保存先フォルダへのアクセス権を持つ人だけが開ける
+    // OneDriveの標準プレビューURL形式を使う(クリックして開いたときと同じ挙動)。
+    // ※createLinkによる共有リンクの新規作成はファイル単位で新たな閲覧権限を
+    // 付与してしまう(フォルダのアクセス権が無い人でもリンクさえ知っていれば開けてしまう)ため、
+    // 意図的に使わない方針とした。
+    const openUrl = buildFileOpenUrl(driveItem);
+
     // 実際にOneDrive側に反映されたdescriptionの値をそのまま返し、
     // プロパティが本当に設定されたかをアプリ画面上で確認できるようにする
     res.json({
-      webUrl: driveItem.webUrl,
+      webUrl: openUrl,
       propertiesUrl,
       name: driveItem.name,
       savedDescription: updatedItem.description || null,
