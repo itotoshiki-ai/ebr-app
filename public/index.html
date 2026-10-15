@@ -63,109 +63,112 @@
 
     <section id="statusArea" class="status" hidden></section>
 
-    <section id="previewArea" class="preview" hidden>
-      <img id="previewImg" alt="プレビュー" hidden />
-      <div id="previewPdf" class="preview-pdf" hidden>
-        <p class="hint">PDFファイル: <span id="pdfName"></span></p>
-        <embed id="previewPdfEmbed" type="application/pdf" />
-      </div>
-    </section>
-
-    <section id="reviewArea" class="review" hidden>
-      <form id="reviewForm">
-        <label>
-          取引年月日
-          <input type="date" id="fieldDate" required />
-        </label>
-        <label>
-          取引先
-          <select id="fieldVendorSelect" hidden></select>
-          <input type="text" id="fieldVendor" list="vendorChoicesList" placeholder="例: 株式会社サンプル" required />
-          <datalist id="vendorChoicesList"></datalist>
-        </label>
-        <p id="vendorNoMatchHint" class="hint" hidden>
-          AIが抽出した取引先がリストにありません。プルダウンから選び直してください。
-        </p>
-        <label>
-          取引金額 (円)
-          <input type="number" id="fieldAmount" placeholder="例: 12000" required />
-        </label>
-        <p class="hint">税抜き金額を入力してください(自動抽出でも税抜き金額を優先して取得します)。</p>
-        <p class="hint">文字認識による自動抽出結果です。内容を確認し、必要に応じて修正してから保存してください。</p>
-
-        <hr />
-        <p class="hint">
-          書類種別は文字認識で自動判定を試みます(領収書/請求書/見積書など)。それ以外は自動抽出されません。
-          必要に応じて修正・入力してください(選択肢はOneDriveの設定から取得します)。
-        </p>
-        <label>
-          授受区分
-          <select id="fieldExchangeTypeSelect" hidden></select>
-          <input type="text" id="fieldExchangeType" list="exchangeTypeChoicesList" placeholder="例: 受領 / 交付" required />
-          <datalist id="exchangeTypeChoicesList"></datalist>
-        </label>
-        <p id="exchangeTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
-        <label>
-          書類種別
-          <select id="fieldDocumentTypeSelect" hidden></select>
-          <input type="text" id="fieldDocumentType" list="documentTypeChoicesList" placeholder="例: 領収書 / 請求書 / 契約書" required />
-          <datalist id="documentTypeChoicesList"></datalist>
-        </label>
-        <p id="documentTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
-        <label>
-          開始日または締日
-          <input type="date" id="fieldPeriodDate" required />
-        </label>
-        <p class="hint">
-          【開始日を入力する書類】<br />
-          見積依頼書、見積書、基本契約書、個別契約書、覚書、派遣先管理台帳、派遣元管理台帳、就業条件明示書、機密保持契約書、注文書、注文請書<br />
-          【締日を入力する書類】※但し、現金払いの場合は支払日<br />
-          納品書、検収書、請求書、領収書
-        </p>
-        <label>
-          授受手段
-          <select id="fieldExchangeMethodSelect" hidden></select>
-          <input type="text" id="fieldExchangeMethod" list="exchangeMethodChoicesList" placeholder="例: 紙(スキャナ保存) / 電子メール / EDI" required />
-          <datalist id="exchangeMethodChoicesList"></datalist>
-        </label>
-        <p id="exchangeMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
-
-        <hr />
-        <p class="hint">以下は任意項目です(未入力のまま保存できます)。</p>
-        <label>
-          支払方法
-          <select id="fieldPaymentMethodSelect" hidden></select>
-          <input type="text" id="fieldPaymentMethod" list="paymentMethodChoicesList" placeholder="例: 現金 / 振込 / クレジットカード" />
-          <datalist id="paymentMethodChoicesList"></datalist>
-        </label>
-        <p id="paymentMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
-        <label>
-          支払日
-          <input type="date" id="fieldPaymentDate" />
-        </label>
-        <label>
-          仕訳状況
-          <select id="fieldJournalStatusSelect" hidden></select>
-          <input type="text" id="fieldJournalStatus" list="journalStatusChoicesList" placeholder="例: 未仕訳 / 仕訳済み" />
-          <datalist id="journalStatusChoicesList"></datalist>
-        </label>
-        <p id="journalStatusNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
-        <label>
-          備考
-          <input type="text" id="fieldRemarks" placeholder="任意のメモ" />
-        </label>
-
-        <hr />
-        <label>
-          ファイル名(拡張子は自動付与)
-          <input type="text" id="fieldFileName" />
-        </label>
-        <div class="actions">
-          <button type="submit" class="btn">OneDriveに保存</button>
-          <button type="button" id="cancelBtn" class="btn btn-secondary">キャンセル</button>
+    <div class="workspace">
+      <section id="previewArea" class="preview" hidden>
+        <img id="previewImg" alt="プレビュー" hidden />
+        <div id="previewPdf" class="preview-pdf" hidden>
+          <p class="hint">PDFファイル: <span id="pdfName"></span></p>
+          <embed id="previewPdfEmbed" type="application/pdf" />
         </div>
-      </form>
-    </section>
+      </section>
+
+      <section id="reviewArea" class="review" hidden>
+        <form id="reviewForm">
+          <label>
+            ファイル名(拡張子は自動付与)
+            <input type="text" id="fieldFileName" />
+          </label>
+          <p id="fileNameDateHint" class="hint" hidden></p>
+          <hr />
+          <label>
+            取引年月日
+            <input type="date" id="fieldDate" required />
+          </label>
+          <label>
+            取引先
+            <select id="fieldVendorSelect" hidden></select>
+            <input type="text" id="fieldVendor" list="vendorChoicesList" placeholder="例: 株式会社サンプル" required />
+            <datalist id="vendorChoicesList"></datalist>
+          </label>
+          <p id="vendorNoMatchHint" class="hint" hidden>
+            AIが抽出した取引先がリストにありません。プルダウンから選び直してください。
+          </p>
+          <label>
+            取引金額 (円)
+            <input type="number" id="fieldAmount" placeholder="例: 12000" required />
+          </label>
+          <p class="hint">税抜き金額を入力してください(自動抽出でも税抜き金額を優先して取得します)。</p>
+          <p class="hint">文字認識による自動抽出結果です。内容を確認し、必要に応じて修正してから保存してください。</p>
+
+          <hr />
+          <p class="hint">
+            書類種別は文字認識で自動判定を試みます(領収書/請求書/見積書など)。それ以外は自動抽出されません。
+            必要に応じて修正・入力してください(選択肢はOneDriveの設定から取得します)。
+          </p>
+          <label>
+            授受区分
+            <select id="fieldExchangeTypeSelect" hidden></select>
+            <input type="text" id="fieldExchangeType" list="exchangeTypeChoicesList" placeholder="例: 受領 / 交付" required />
+            <datalist id="exchangeTypeChoicesList"></datalist>
+          </label>
+          <p id="exchangeTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+          <label>
+            書類種別
+            <select id="fieldDocumentTypeSelect" hidden></select>
+            <input type="text" id="fieldDocumentType" list="documentTypeChoicesList" placeholder="例: 領収書 / 請求書 / 契約書" required />
+            <datalist id="documentTypeChoicesList"></datalist>
+          </label>
+          <p id="documentTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+          <label>
+            開始日または締日
+            <input type="date" id="fieldPeriodDate" required />
+          </label>
+          <p class="hint">
+            【開始日を入力する書類】<br />
+            見積依頼書、見積書、基本契約書、個別契約書、覚書、派遣先管理台帳、派遣元管理台帳、就業条件明示書、機密保持契約書、注文書、注文請書<br />
+            【締日を入力する書類】※但し、現金払いの場合は支払日<br />
+            納品書、検収書、請求書、領収書
+          </p>
+          <label>
+            授受手段
+            <select id="fieldExchangeMethodSelect" hidden></select>
+            <input type="text" id="fieldExchangeMethod" list="exchangeMethodChoicesList" placeholder="例: 紙(スキャナ保存) / 電子メール / EDI" required />
+            <datalist id="exchangeMethodChoicesList"></datalist>
+          </label>
+          <p id="exchangeMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+
+          <hr />
+          <p class="hint">以下は任意項目です(未入力のまま保存できます)。</p>
+          <label>
+            支払方法
+            <select id="fieldPaymentMethodSelect" hidden></select>
+            <input type="text" id="fieldPaymentMethod" list="paymentMethodChoicesList" placeholder="例: 現金 / 振込 / クレジットカード" />
+            <datalist id="paymentMethodChoicesList"></datalist>
+          </label>
+          <p id="paymentMethodNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+          <label>
+            支払日
+            <input type="date" id="fieldPaymentDate" />
+          </label>
+          <label>
+            仕訳状況
+            <select id="fieldJournalStatusSelect" hidden></select>
+            <input type="text" id="fieldJournalStatus" list="journalStatusChoicesList" placeholder="例: 未仕訳 / 仕訳済み" />
+            <datalist id="journalStatusChoicesList"></datalist>
+          </label>
+          <p id="journalStatusNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>
+          <label>
+            備考
+            <input type="text" id="fieldRemarks" placeholder="任意のメモ" />
+          </label>
+
+          <div class="actions">
+            <button type="submit" class="btn">OneDriveに保存</button>
+            <button type="button" id="cancelBtn" class="btn btn-secondary">キャンセル</button>
+          </div>
+        </form>
+      </section>
+    </div>
 
     <section id="resultArea" class="result" hidden>
       <p>保存が完了しました。</p>

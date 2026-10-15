@@ -68,6 +68,7 @@ const loadSharedListBtn = document.getElementById('loadSharedListBtn');
 const skipExtractCheckbox = document.getElementById('skipExtractCheckbox');
 const columnMappingStatus = document.getElementById('columnMappingStatus');
 const columnsWrittenText = document.getElementById('columnsWrittenText');
+const fileNameDateHint = document.getElementById('fileNameDateHint');
 const versionsResetText = document.getElementById('versionsResetText');
 
 let currentUploadId = null;
@@ -75,6 +76,8 @@ let currentUploadId = null;
 // 変更に追従してファイル名を再生成する。ユーザーがファイル名を一度でも手入力したら
 // falseにし、それ以降は上書きしない。
 let fileNameIsDefault = true;
+// 文字認識で見つかった支払期限(YYYY-MM-DD)。ファイル名の日付には取引年月日より優先して使う。
+let extractedDueDate = null;
 
 // SharePoint側の設定に応じて、入力欄を「選択式(自由入力不可)」「候補付き自由入力」
 // 「素の自由入力」に切り替える汎用ヘルパー。取引先・授受区分・書類種別・授受手段・
@@ -296,20 +299,33 @@ function resetToDropZone() {
   fieldRemarks.value = '';
   fieldFileName.value = '';
   fileNameIsDefault = true;
+  setExtractedDueDate(null);
 }
 
-// サーバー側のファイル名自動生成(取引先_取引日付)と同じ規則で、
+// サーバー側のファイル名自動生成(取引先_日付)と同じ規則で、
 // ファイル名入力欄の初期値(ユーザーが後から自由に編集できる)を作る
 function sanitizeFileNamePartForPreview(value, fallback) {
   const str = (value == null ? '' : String(value)).trim();
   const cleaned = str.replace(/[\\/:*?"<>| -]/g, '_');
   return cleaned || fallback;
 }
+// サーバー側と同じ規則で、ファイル名の自動生成では取引先名から法人格(株式会社・(株)等)を除外する。
+// 取引先プロパティ(SharePoint列)には法人格付きのまま書き込むため、ファイル名専用の整形。
+const LEGAL_ENTITY_PATTERN =
+  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?)$/gi;
+function stripLegalEntity(name) {
+  if (name == null) return name;
+  const original = String(name);
+  const stripped = original.replace(LEGAL_ENTITY_PATTERN, '').replace(/^[\s　]+|[\s　]+$/g, '');
+  // 法人格だけの名前(除去すると空になる)は元のまま使う
+  return stripped || original;
+}
+// dateは「YYYY-MM-DD」。ファイル名では「yymmdd」(西暦下2桁・区切りなし)にする。
 function buildDefaultFileNameBase(date, vendor) {
-  const vendorPart = sanitizeFileNamePartForPreview(vendor, '取引先不明');
+  const vendorPart = sanitizeFileNamePartForPreview(stripLegalEntity(vendor), '取引先不明');
   // sanitizeFileNamePartForPreviewは「-」を「_」に変換してしまうため、
-  // 先にハイフンを除去してから渡す(YYYYMMDD形式にするため)
-  const strippedDate = date == null ? date : String(date).replace(/-/g, '');
+  // 先にハイフンを除去してから渡す
+  const strippedDate = date == null ? date : String(date).replace(/-/g, '').replace(/^\d{2}(?=\d{6}$)/, '');
   const datePart = sanitizeFileNamePartForPreview(strippedDate, '日付不明');
   return `${vendorPart}_${datePart}`;
 }
@@ -318,7 +334,16 @@ function buildDefaultFileNameBase(date, vendor) {
 // 再生成する。ユーザーがファイル名を手入力していたら(fileNameIsDefault===false)何もしない。
 function refreshDefaultFileNameIfUntouched() {
   if (!fileNameIsDefault) return;
-  fieldFileName.value = buildDefaultFileNameBase(fieldDate.value, vendorField.getValue());
+  fieldFileName.value = buildDefaultFileNameBase(extractedDueDate || fieldDate.value, vendorField.getValue());
+}
+
+// 支払期限を記憶し、ファイル名の日付にどちらを使っているかをファイル名欄の下に表示する
+function setExtractedDueDate(dueDate) {
+  extractedDueDate = dueDate || null;
+  fileNameDateHint.textContent = extractedDueDate
+    ? `ファイル名の日付には支払期限(${extractedDueDate})を使用しています。`
+    : '';
+  fileNameDateHint.hidden = !extractedDueDate;
 }
 
 async function handleFile(file) {
@@ -370,7 +395,8 @@ async function handleFile(file) {
     fieldPaymentDate.value = '';
     journalStatusField.resetValue();
     fieldRemarks.value = '';
-    fieldFileName.value = buildDefaultFileNameBase(data.date, data.vendor);
+    setExtractedDueDate(data.dueDate);
+    fieldFileName.value = buildDefaultFileNameBase(extractedDueDate || data.date, data.vendor);
     fileNameIsDefault = true;
 
     clearStatus();
@@ -421,6 +447,7 @@ function buildSavePayload(overwrite) {
     paymentDate: fieldPaymentDate.value,
     journalStatus: journalStatusField.getValue(),
     remarks: fieldRemarks.value,
+    dueDate: extractedDueDate,
     fileName: fieldFileName.value,
     overwrite: !!overwrite,
   };

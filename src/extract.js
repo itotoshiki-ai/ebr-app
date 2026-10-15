@@ -155,6 +155,22 @@ function extractDate(text) {
   return candidates[0].date;
 }
 
+// 支払期限(請求書の「お支払期限」「振込期限」等)を探す。ファイル名の日付に優先的に使うため、
+// 取引年月日とは別に抽出する。ラベルの直後(同じ行の残り+次の2行)にある最初の有効な日付を採用し、
+// ラベルが無い・ラベル付近に日付が無い場合はnullを返す(呼び出し側で取引年月日にフォールバック)。
+const DUE_DATE_LABEL_PATTERN = /(?:お?支払い?|お?振込み?)\s*(?:期限|期日)/g;
+const DUE_DATE_LOOKAHEAD_LINES = 2;
+
+function extractDueDate(text) {
+  for (const m of text.matchAll(DUE_DATE_LABEL_PATTERN)) {
+    const after = text.slice(m.index + m[0].length);
+    const nearby = after.split('\n').slice(0, DUE_DATE_LOOKAHEAD_LINES + 1).join('\n');
+    const date = extractDate(nearby);
+    if (date) return date;
+  }
+  return null;
+}
+
 function formatDate(year, month, day) {
   const y = String(year).padStart(4, '0');
   const m = String(month).padStart(2, '0');
@@ -230,6 +246,33 @@ function findAmountNear(lines, index, keyword) {
   return null;
 }
 
+// 消費税率(8%/10%、混在含む)として妥当な「消費税額÷税抜金額」の範囲
+const TAX_RATIO_MIN = 0.075;
+const TAX_RATIO_MAX = 0.105;
+
+// 見つかった金額が税込だった場合に、文書中に実際に書かれている税抜金額を探す。
+// 表形式の請求書では「税抜金額 / 消費税額 / 税込金額」のラベル列と数値列がOCR上で
+// 離れてしまい、ラベル直後に数値が無いためキーワード探索では税込金額しか拾えないことがある。
+// そこで「税抜N + 消費税X = 税込T」となるN・Xが両方とも文書中に存在し、X/Nが消費税率として
+// 妥当な場合にNを税抜金額とみなす(計算で作った値ではなく、文書に書かれている数値だけを使う)。
+function findTaxExcludedAmount(text, total) {
+  const numbers = new Set(
+    [...text.matchAll(new RegExp(NUMBER_BODY, 'g'))]
+      .map((m) => parseAmountToken(m[0]))
+      .filter((n) => n !== null)
+  );
+  let best = null;
+  for (const n of numbers) {
+    if (n >= total) continue;
+    const tax = total - n;
+    const ratio = tax / n;
+    if (ratio < TAX_RATIO_MIN || ratio > TAX_RATIO_MAX) continue;
+    if (!numbers.has(tax)) continue;
+    if (best === null || n > best) best = n;
+  }
+  return best;
+}
+
 function extractAmount(text) {
   // 「126,000 (税抜)」のように金額の直後に税抜の注記が付いている場合は最優先で採用する
   const beforeTaxMatch = text.match(AMOUNT_BEFORE_TAX_EXCLUDED_PATTERN);
@@ -238,6 +281,12 @@ function extractAmount(text) {
     if (amount !== null) return amount;
   }
 
+  const amount = extractAmountByKeyword(text);
+  if (amount === null) return null;
+  return findTaxExcludedAmount(text, amount) ?? amount;
+}
+
+function extractAmountByKeyword(text) {
   const lines = text.split('\n');
 
   // キーワードを優先度順に走査し、最初に見つかった行の金額を採用する
@@ -358,11 +407,32 @@ const DOCUMENT_TYPE_PATTERNS = [
   { label: '検収書', pattern: /検収書/ },
 ];
 
+// 「請求書番号」「品目・納品書番号」のような項目名の一部は書類種別の判定に使わない
+const DOCUMENT_TYPE_COMPOUND_SUFFIX = /^\s*(?:番号|No|NO|№)/;
+
+// 書類種別を判定する。1枚の書類に複数の種別名が登場すること(請求書の明細列に
+// 「納品書番号」がある等)があるため、パターンの並び順ではなく次の順で決める:
+//   1. 種別名だけが書かれた行(=書類のタイトル。「請 求 書」「御請求書」も可)
+//   2. 項目名の一部(〜番号等)を除き、文書中で最も先に登場する種別名
 function extractDocumentType(text) {
-  for (const { label, pattern } of DOCUMENT_TYPE_PATTERNS) {
-    if (pattern.test(text)) return label;
+  for (const line of text.split('\n')) {
+    const title = line.replace(/[\s　]/g, '').replace(/^[御ご]/, '');
+    const found = DOCUMENT_TYPE_PATTERNS.find(({ pattern }) => {
+      const m = title.match(pattern);
+      return m && m[0] === title;
+    });
+    if (found) return found.label;
   }
-  return null;
+
+  let earliest = null;
+  for (const { label, pattern } of DOCUMENT_TYPE_PATTERNS) {
+    for (const m of text.matchAll(new RegExp(pattern.source, 'g'))) {
+      if (DOCUMENT_TYPE_COMPOUND_SUFFIX.test(text.slice(m.index + m[0].length))) continue;
+      if (earliest === null || m.index < earliest.index) earliest = { index: m.index, label };
+      break;
+    }
+  }
+  return earliest ? earliest.label : null;
 }
 
 // OCR結果に全角数字・全角カンマが含まれることがあるため、金額・日付の数値解析の前に半角へ統一する
@@ -381,11 +451,12 @@ async function extractReceiptData({ base64Data, mimeType }) {
   const text = rawText ? normalizeOcrText(rawText) : '';
 
   if (!text) {
-    return { date: null, vendor: null, amount: null, documentType: null };
+    return { date: null, dueDate: null, vendor: null, amount: null, documentType: null };
   }
 
   const result = {
     date: extractDate(text),
+    dueDate: extractDueDate(text),
     vendor: extractVendor(text),
     amount: extractAmount(text),
     documentType: extractDocumentType(text),

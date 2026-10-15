@@ -86,21 +86,34 @@ function sanitizeFileNamePart(value, fallback) {
   return cleaned || fallback;
 }
 
-// ファイル名用に日付を「YYYYMMDD」形式(区切り文字なし)にする。
+// ファイル名の自動生成では取引先名から法人格(株式会社・(株)等)を除外する。
+// 取引先プロパティ(SharePoint列)には法人格付きのまま書き込むため、ファイル名専用の整形。
+const LEGAL_ENTITY_PATTERN =
+  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?)$/gi;
+function stripLegalEntity(name) {
+  if (name == null) return name;
+  const original = String(name);
+  const stripped = original.replace(LEGAL_ENTITY_PATTERN, '').replace(/^[\s　]+|[\s　]+$/g, '');
+  // 法人格だけの名前(除去すると空になる)は元のまま使う
+  return stripped || original;
+}
+
+// ファイル名用に日付「YYYY-MM-DD」を「yymmdd」形式(西暦下2桁・区切り文字なし)にする。
 // sanitizeFileNamePartは「-」を「_」に変換してしまうため、先にハイフンを除去してから渡す。
 function formatDateForFileName(date) {
-  const stripped = date == null ? date : String(date).replace(/-/g, '');
+  const stripped = date == null ? date : String(date).replace(/-/g, '').replace(/^\d{2}(?=\d{6}$)/, '');
   return sanitizeFileNamePart(stripped, '日付不明');
 }
 
 // customBase(ユーザーが手入力したファイル名)が指定されていればそれを優先し、
-// 未指定の場合のみ取引先_取引日付から自動生成する。拡張子は常に自動付与。
-function buildFileName({ date, vendor }, ext, customBase) {
+// 未指定の場合のみ取引先(法人格を除く)_日付から自動生成する。日付は支払期限があればそれを、
+// 無ければ取引年月日を使う。拡張子は常に自動付与。
+function buildFileName({ date, dueDate, vendor }, ext, customBase) {
   if (customBase && customBase.trim()) {
     return `${sanitizeFileNamePart(customBase, 'ファイル名不明')}${ext}`;
   }
-  const vendorPart = sanitizeFileNamePart(vendor, '取引先不明');
-  const datePart = formatDateForFileName(date);
+  const vendorPart = sanitizeFileNamePart(stripLegalEntity(vendor), '取引先不明');
+  const datePart = formatDateForFileName(dueDate || date);
   return `${vendorPart}_${datePart}${ext}`;
 }
 
@@ -179,7 +192,7 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     const { buffer, mimetype, originalname } = req.file;
     const skipExtract = req.body.skipExtract === 'true';
     const extracted = skipExtract
-      ? { date: null, vendor: null, amount: null, documentType: null }
+      ? { date: null, dueDate: null, vendor: null, amount: null, documentType: null }
       : await extractReceiptData({
           base64Data: buffer.toString('base64'),
           mimeType: mimetype,
@@ -217,6 +230,7 @@ app.post('/api/save', async (req, res) => {
       paymentDate,
       journalStatus,
       remarks,
+      dueDate,
       fileName: customFileNameBase,
       overwrite,
     } = req.body;
@@ -248,7 +262,7 @@ app.post('/api/save', async (req, res) => {
 
     const embeddedBuffer = await embedMetadata(entry.buffer, entry.mimeType, fields);
     const ext = extFromMime(entry.mimeType) || path.extname(entry.originalName) || '';
-    const fileName = buildFileName(fields, ext, customFileNameBase);
+    const fileName = buildFileName({ ...fields, dueDate: dueDate || null }, ext, customFileNameBase);
     const subPath = process.env.ONEDRIVE_TARGET_FOLDER || '';
     const target = loadTargetFolder(req.session); // null = 自分のOneDrive / {driveId,itemId,name} = 共有フォルダ
     const summary = buildSummary(fields);

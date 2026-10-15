@@ -28,7 +28,7 @@ body {
 }
 
 header {
-  max-width: 900px;
+  max-width: 1400px;
   margin: 0 auto 24px;
   display: flex;
   flex-wrap: wrap;
@@ -40,7 +40,7 @@ header {
 h1 { font-size: 1.25rem; margin: 0; }
 
 main {
-  max-width: 900px;
+  max-width: 1400px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
@@ -180,11 +180,27 @@ details > .btn { margin-top: 8px; }
 }
 .review[hidden] { display: none; }
 
-.preview { max-width: 100%; }
-.preview img { max-width: 860px; max-height: 640px; border-radius: 8px; }
+/* プレビュー(左)とプロパティ入力(右)の横並び。狭い画面では縦積みに戻す */
+.workspace {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+.workspace > .preview { flex: 3 1 0; min-width: 0; position: sticky; top: 16px; }
+.workspace > .review { flex: 2 1 0; min-width: 320px; }
+
+@media (max-width: 900px) {
+  .workspace { flex-direction: column; align-items: stretch; }
+  .workspace > .preview { position: static; }
+  .workspace > .review { min-width: 0; }
+}
+
+.preview[hidden] { display: none; }
+.preview img { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }
+.preview img[hidden] { display: none; }
 .preview-pdf { display: flex; flex-direction: column; gap: 6px; }
 .preview-pdf[hidden] { display: none; }
-.preview-pdf embed { width: 100%; max-width: 860px; height: 640px; border: 1px solid var(--border); border-radius: 8px; }
+.preview-pdf embed { width: 100%; height: calc(100vh - 64px); min-height: 480px; border: 1px solid var(--border); border-radius: 8px; }
 
 #reviewForm { flex: 1 1 260px; display: flex; flex-direction: column; gap: 12px; min-width: 240px; }
 #reviewForm hr { width: 100%; border: none; border-top: 1px solid var(--border); margin: 0; }
