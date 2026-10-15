@@ -358,7 +358,8 @@ async function handleFile(file) {
 
   // 前回のプレビュー用blob URLが残っていれば解放してから切り替える
   if (previewImg.src) URL.revokeObjectURL(previewImg.src);
-  if (previewPdfEmbed.src) URL.revokeObjectURL(previewPdfEmbed.src);
+  // PDFのsrcには表示指定(#view=FitH)を付けているため、解放時は取り除く
+  if (previewPdfEmbed.src) URL.revokeObjectURL(previewPdfEmbed.src.split('#')[0]);
 
   previewArea.hidden = false;
   if (file.type === 'application/pdf') {
@@ -366,7 +367,8 @@ async function handleFile(file) {
     previewImg.src = '';
     previewPdf.hidden = false;
     pdfName.textContent = file.name;
-    previewPdfEmbed.src = URL.createObjectURL(file);
+    // 初期表示で横スクロールが出ないよう、ページ幅に合わせて表示する
+    previewPdfEmbed.src = `${URL.createObjectURL(file)}#view=FitH`;
   } else {
     previewPdf.hidden = true;
     previewPdfEmbed.src = '';
@@ -785,6 +787,16 @@ useShareLinkBtn.addEventListener('click', async () => {
     useShareLinkBtn.textContent = '設定';
   }
 });
+
+// プレビュー枠の高さを「ワークスペース上端から画面下端まで」にするため、上端位置をCSS変数に渡す。
+// 上部の表示(ステータス・保存先履歴など)が増減すると位置が変わるので、main のサイズ変化も監視する
+const workspaceEl = document.querySelector('.workspace');
+function updateWorkspaceTop() {
+  const top = workspaceEl.getBoundingClientRect().top + window.scrollY;
+  document.documentElement.style.setProperty('--workspace-top', `${Math.round(top)}px`);
+}
+window.addEventListener('resize', updateWorkspaceTop);
+new ResizeObserver(updateWorkspaceTop).observe(document.querySelector('main'));
 
 refreshAuthStatus();
 refreshTargetFolder();

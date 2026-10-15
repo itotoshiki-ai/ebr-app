@@ -20,8 +20,8 @@
   <main>
     <section id="targetFolderArea" class="target-folder">
       <span>保存先: <strong id="targetFolderLabel">確認中...</strong></span>
-      <button type="button" id="changeTargetBtn" class="btn btn-secondary">変更</button>
-      <button type="button" id="refreshVendorListBtn" class="btn btn-secondary" hidden>選択肢リストを更新</button>
+      <button type="button" id="changeTargetBtn" class="btn btn-secondary btn-small">変更</button>
+      <button type="button" id="refreshVendorListBtn" class="btn btn-secondary btn-small" hidden>選択肢リストを更新</button>
     </section>
     <div id="targetFolderHistory" class="target-folder-history" hidden></div>
     <p id="columnMappingStatus" class="hint" hidden></p>
@@ -75,11 +75,12 @@
       <section id="reviewArea" class="review" hidden>
         <form id="reviewForm">
           <label>
-            ファイル名(拡張子は自動付与)
+            <span>ファイル名<small>拡張子は自動付与</small></span>
             <input type="text" id="fieldFileName" />
           </label>
           <p id="fileNameDateHint" class="hint" hidden></p>
           <hr />
+          <p class="hint">文字認識による自動抽出結果です。内容を確認し、必要に応じて修正してから保存してください。</p>
           <label>
             取引年月日
             <input type="date" id="fieldDate" required />
@@ -94,16 +95,13 @@
             AIが抽出した取引先がリストにありません。プルダウンから選び直してください。
           </p>
           <label>
-            取引金額 (円)
-            <input type="number" id="fieldAmount" placeholder="例: 12000" required />
+            <span>取引金額 (円)<small>税抜き</small></span>
+            <input type="number" id="fieldAmount" placeholder="例: 12000" title="税抜き金額を入力してください(自動抽出でも税抜き金額を優先して取得します)" required />
           </label>
-          <p class="hint">税抜き金額を入力してください(自動抽出でも税抜き金額を優先して取得します)。</p>
-          <p class="hint">文字認識による自動抽出結果です。内容を確認し、必要に応じて修正してから保存してください。</p>
 
           <hr />
-          <p class="hint">
-            書類種別は文字認識で自動判定を試みます(領収書/請求書/見積書など)。それ以外は自動抽出されません。
-            必要に応じて修正・入力してください(選択肢はOneDriveの設定から取得します)。
+          <p class="hint" title="選択肢はOneDriveの設定から取得します">
+            書類種別のみ自動抽出しています(領収書/請求書/見積書など)。他は入力してください。
           </p>
           <label>
             授受区分
@@ -123,12 +121,13 @@
             開始日または締日
             <input type="date" id="fieldPeriodDate" required />
           </label>
-          <p class="hint">
+          <details class="hint period-date-help">
+            <summary>開始日・締日のどちらを入力するか</summary>
             【開始日を入力する書類】<br />
             見積依頼書、見積書、基本契約書、個別契約書、覚書、派遣先管理台帳、派遣元管理台帳、就業条件明示書、機密保持契約書、注文書、注文請書<br />
             【締日を入力する書類】※但し、現金払いの場合は支払日<br />
             納品書、検収書、請求書、領収書
-          </p>
+          </details>
           <label>
             授受手段
             <select id="fieldExchangeMethodSelect" hidden></select>
@@ -168,32 +167,32 @@
           </div>
         </form>
       </section>
-    </div>
 
-    <section id="resultArea" class="result" hidden>
-      <p>保存が完了しました。</p>
-      <div class="result-link-row">
-        <input id="resultFileNameText" type="text" readonly onclick="this.select()">
-        <button type="button" id="copyFileNameBtn" class="btn btn-secondary btn-small">コピー</button>
-      </div>
-      <div class="result-link-row">
-        <a id="resultLink" href="#" target="_blank" rel="noopener">ファイルを開く</a>
-        <input id="resultLinkText" type="text" readonly onclick="this.select()">
-        <button type="button" id="copyResultLinkBtn" class="btn btn-secondary btn-small">コピー</button>
-      </div>
-      <div class="result-link-row" id="propertiesLinkRow" hidden>
-        <a id="propertiesLink" href="#" target="_blank" rel="noopener">プロパティを開く</a>
-        <input id="propertiesLinkText" type="text" readonly onclick="this.select()">
-        <button type="button" id="copyPropertiesLinkBtn" class="btn btn-secondary btn-small">コピー</button>
-      </div>
-      <div class="saved-description">
-        <strong>OneDriveに設定されたプロパティ:</strong>
-        <p id="savedDescriptionText"></p>
-      </div>
-      <p id="columnsWrittenText" class="hint" hidden></p>
-      <p id="versionsResetText" class="hint" hidden></p>
-      <button type="button" id="resetBtn" class="btn">続けて別の証憑を取り込む</button>
-    </section>
+      <section id="resultArea" class="result" hidden>
+        <p>保存が完了しました。</p>
+        <div class="result-link-row">
+          <input id="resultFileNameText" type="text" readonly onclick="this.select()">
+          <button type="button" id="copyFileNameBtn" class="btn btn-secondary btn-small">コピー</button>
+        </div>
+        <div class="result-link-row">
+          <a id="resultLink" href="#" target="_blank" rel="noopener">ファイルを開く</a>
+          <input id="resultLinkText" type="text" readonly onclick="this.select()">
+          <button type="button" id="copyResultLinkBtn" class="btn btn-secondary btn-small">コピー</button>
+        </div>
+        <div class="result-link-row" id="propertiesLinkRow" hidden>
+          <a id="propertiesLink" href="#" target="_blank" rel="noopener">プロパティを開く</a>
+          <input id="propertiesLinkText" type="text" readonly onclick="this.select()">
+          <button type="button" id="copyPropertiesLinkBtn" class="btn btn-secondary btn-small">コピー</button>
+        </div>
+        <div class="saved-description">
+          <strong>OneDriveに設定されたプロパティ:</strong>
+          <p id="savedDescriptionText"></p>
+        </div>
+        <p id="columnsWrittenText" class="hint" hidden></p>
+        <p id="versionsResetText" class="hint" hidden></p>
+        <button type="button" id="resetBtn" class="btn">続けて別の証憑を取り込む</button>
+      </section>
+    </div>
   </main>
 
   <script src="/app.js"></script>

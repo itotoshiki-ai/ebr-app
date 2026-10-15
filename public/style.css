@@ -20,7 +20,7 @@
 
 body {
   margin: 0;
-  padding-block: 24px;
+  padding-block: 16px;
   padding-inline: 16px;
   font-family: -apple-system, "Segoe UI", "Hiragino Kaku Gothic ProN", Meiryo, sans-serif;
   background: var(--bg);
@@ -29,7 +29,7 @@ body {
 
 header {
   max-width: 1400px;
-  margin: 0 auto 24px;
+  margin: 0 auto 12px;
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -44,7 +44,7 @@ main {
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .auth-area { display: flex; align-items: center; gap: 8px; font-size: 0.9rem; }
@@ -77,7 +77,7 @@ main {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 10px 14px;
+  padding: 6px 14px;
   border: 1px solid var(--border);
   border-radius: 8px;
   font-size: 0.85rem;
@@ -176,44 +176,71 @@ details > .btn { margin-top: 8px; }
   gap: 16px;
   border: 1px solid var(--border);
   border-radius: 12px;
-  padding: 16px;
+  padding: 12px 16px;
 }
 .review[hidden] { display: none; }
 
-/* プレビュー(左)とプロパティ入力(右)の横並び。狭い画面では縦積みに戻す */
+/* プレビュー(左)とプロパティ入力・保存結果(右)の横並び。狭い画面では縦積みに戻す */
 .workspace {
   display: flex;
   gap: 16px;
   align-items: flex-start;
 }
-.workspace > .preview { flex: 3 1 0; min-width: 0; position: sticky; top: 16px; }
-.workspace > .review { flex: 2 1 0; min-width: 320px; }
+/* プレビュー枠は画面下端までの高さに固定し、はみ出す分は枠内でスクロールさせる。
+   --workspace-top はapp.jsがワークスペース上端の位置から設定する */
+.workspace > .preview {
+  /* 右側(入力欄・保存結果)が未表示の抽出中も、最初から横幅の3/5で表示する */
+  flex: 0 1 calc((100% - 16px) * 0.6);
+  min-width: 0;
+  position: sticky;
+  top: 16px;
+  height: max(360px, calc(100vh - var(--workspace-top, 200px) - 16px));
+  overflow-x: hidden;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+}
+.workspace > .review,
+.workspace > .result { flex: 1 1 0; min-width: 320px; }
 
 @media (max-width: 900px) {
   .workspace { flex-direction: column; align-items: stretch; }
-  .workspace > .preview { position: static; }
-  .workspace > .review { min-width: 0; }
+  .workspace > .preview { flex: none; position: static; height: 70vh; }
+  .workspace > .review,
+  .workspace > .result { min-width: 0; }
 }
 
 .preview[hidden] { display: none; }
-.preview img { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }
+.preview img { display: block; max-width: 100%; margin: 0 auto; border-radius: 8px; }
 .preview img[hidden] { display: none; }
-.preview-pdf { display: flex; flex-direction: column; gap: 6px; }
+.preview-pdf { display: flex; flex-direction: column; gap: 6px; height: 100%; }
 .preview-pdf[hidden] { display: none; }
-.preview-pdf embed { width: 100%; height: calc(100vh - 64px); min-height: 480px; border: 1px solid var(--border); border-radius: 8px; }
+.preview-pdf embed { width: 100%; flex: 1 1 auto; min-height: 0; border: 1px solid var(--border); border-radius: 8px; }
 
-#reviewForm { flex: 1 1 260px; display: flex; flex-direction: column; gap: 12px; min-width: 240px; }
-#reviewForm hr { width: 100%; border: none; border-top: 1px solid var(--border); margin: 0; }
-#reviewForm label { display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; }
+/* ラベルと入力欄を1行に並べて縦方向を圧縮する */
+#reviewForm { flex: 1 1 260px; display: flex; flex-direction: column; gap: 6px; min-width: 240px; }
+#reviewForm hr { width: 100%; border: none; border-top: 1px solid var(--border); margin: 2px 0; }
+#reviewForm label {
+  display: grid;
+  grid-template-columns: 8.5em minmax(0, 1fr);
+  align-items: center;
+  column-gap: 8px;
+  font-size: 0.85rem;
+}
+#reviewForm label small { display: block; font-size: 0.7rem; opacity: 0.7; }
 #reviewForm input,
 #reviewForm select {
-  padding: 8px;
+  min-width: 0;
+  padding: 4px 8px;
   border-radius: 6px;
   border: 1px solid var(--border);
   background: transparent;
   color: var(--fg);
-  font-size: 1rem;
+  font-size: 0.95rem;
 }
+#reviewForm .actions { margin-top: 4px; }
+.period-date-help summary { cursor: pointer; }
 
 .hint { font-size: 0.75rem; opacity: 0.7; margin: 0; }
 .actions { display: flex; gap: 8px; }
