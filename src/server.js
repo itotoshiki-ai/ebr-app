@@ -395,13 +395,6 @@ app.post('/api/save', async (req, res) => {
   }
 });
 
-// 保存先を切り替える直前の「現在アクティブな保存先」を履歴エントリの形で返す。
-// 履歴が満杯のときに新しい保存先を追加する場合、この項目を追い出す対象として使う。
-function currentHistoryEntry(session) {
-  const target = loadTargetFolder(session);
-  return target ? { mode: 'shared', driveId: target.driveId, itemId: target.itemId } : { mode: 'own' };
-}
-
 app.get('/api/target-folder', async (req, res) => {
   const target = loadTargetFolder(req.session);
   const history = loadHistory(req.session);
@@ -521,7 +514,6 @@ app.post('/api/target-folder', async (req, res) => {
   if (!driveId || !itemId) {
     return res.status(400).json({ error: 'driveIdとitemIdが必要です' });
   }
-  const previousEntry = currentHistoryEntry(req.session);
   saveTargetFolder(req.session, { driveId, itemId, name });
   let fullPath = null;
   try {
@@ -530,15 +522,14 @@ app.post('/api/target-folder', async (req, res) => {
   } catch (err) {
     // 表示補助情報のため取得失敗は無視する
   }
-  // 履歴が満杯の場合、切り替える直前まで選択されていた保存先(previousEntry)と入れ替える
-  addOrReplaceHistory(req.session, { mode: 'shared', driveId, itemId, name, ...(fullPath ? { fullPath } : {}) }, previousEntry);
+  // 履歴が満杯の場合、登録が最も古い保存先と入れ替える
+  addOrReplaceHistory(req.session, { mode: 'shared', driveId, itemId, name, ...(fullPath ? { fullPath } : {}) });
   res.json({ mode: 'shared', driveId, itemId, name });
 });
 
 app.post('/api/target-folder/reset', (req, res) => {
-  const previousEntry = currentHistoryEntry(req.session);
   clearTargetFolder(req.session);
-  addOrReplaceHistory(req.session, { mode: 'own' }, previousEntry);
+  addOrReplaceHistory(req.session, { mode: 'own' });
   res.json({ mode: 'own' });
 });
 
@@ -547,7 +538,6 @@ app.post('/api/target-folder/from-link', async (req, res) => {
     const accessToken = await getAccessToken(req);
     const { url } = req.body;
     const resolved = await resolveSharingUrl(accessToken, url);
-    const previousEntry = currentHistoryEntry(req.session);
     saveTargetFolder(req.session, { driveId: resolved.driveId, itemId: resolved.itemId, name: resolved.name });
     let fullPath = null;
     try {
@@ -563,8 +553,7 @@ app.post('/api/target-folder/from-link', async (req, res) => {
         itemId: resolved.itemId,
         name: resolved.name,
         ...(fullPath ? { fullPath } : {}),
-      },
-      previousEntry
+      }
     );
     res.json({ mode: 'shared', ...resolved });
   } catch (err) {

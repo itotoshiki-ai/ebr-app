@@ -30,6 +30,7 @@ function saveColumnMapping(session, columnMapping) {
 // 過去に選択した保存先(最大MAX_HISTORY件)を記憶し、ラジオボタンでの素早い切り替えに使う。
 // 表示順は選択状況に関わらずフォルダ名の昇順で固定(saveHistory参照)。
 // entry: { mode: 'own' } または { mode: 'shared', driveId, itemId, name, columnMapping }
+// 各項目には初めて記憶した時刻(registeredAt)を持たせ、満杯時に追い出す項目の判定に使う。
 function historyKey(entry) {
   return entry.mode === 'own' ? 'own' : `${entry.driveId}:${entry.itemId}`;
 }
@@ -45,6 +46,12 @@ function historySortLabel(entry) {
   return entry.mode === 'own' ? '自分のOneDrive' : entry.fullPath || entry.name || '';
 }
 
+// 同一ミリ秒内に続けて登録しても順序が判定できるよう、既存項目より必ず大きい値にする
+function nextRegisteredAt(list) {
+  const latest = list.reduce((max, e) => Math.max(max, e.registeredAt || 0), 0);
+  return Math.max(Date.now(), latest + 1);
+}
+
 function saveHistory(session, list) {
   const sorted = list
     .slice(0, MAX_HISTORY)
@@ -54,54 +61,44 @@ function saveHistory(session, list) {
 }
 
 // 同じ保存先(mode+driveId+itemId)が既に記憶されていれば、その項目を残したまま
-// 内容(columnMappingなど)だけ更新して先頭に繰り上げる。新規かつ空きがあれば先頭に追加する。
-// 新規かつMAX_HISTORY件で満杯の場合は、追い出す項目を決められないので何もしない
-// (呼び出し側でどれと入れ替えるか分かっている場合はaddOrReplaceHistoryを使う)。
+// 内容(columnMappingなど)だけ更新する(registeredAtは最初に記憶した時刻のまま維持)。
+// 記憶されていなければ何もしない(新規追加はaddOrReplaceHistoryを使う)。
 function recordHistory(session, entry) {
   const list = loadHistory(session);
   const key = historyKey(entry);
   const idx = list.findIndex((e) => historyKey(e) === key);
-  if (idx >= 0) {
-    const merged = { ...list[idx], ...entry };
-    list.splice(idx, 1);
-    list.unshift(merged);
-    return saveHistory(session, list);
+  if (idx < 0) {
+    if (list.length < MAX_HISTORY) {
+      list.push({ ...entry, registeredAt: nextRegisteredAt(list) });
+      return saveHistory(session, list);
+    }
+    return list;
   }
-  if (list.length < MAX_HISTORY) {
-    list.unshift(entry);
-    return saveHistory(session, list);
-  }
-  return list;
+  list[idx] = { ...list[idx], ...entry, registeredAt: list[idx].registeredAt };
+  return saveHistory(session, list);
 }
 
-// 保存先を新しく切り替えるときに使う。履歴に空きがあれば単に追加するが、
-// 満杯(MAX_HISTORY件)の場合は「切り替える直前まで選択されていた保存先」(previousEntry)を
-// 追い出して代わりにentryを記憶する。ユーザーがどのフォルダから別のフォルダへ切り替えたかで
-// 入れ替え対象が自然に決まるため、追加の確認UIなしで直感的な挙動になる。
-function addOrReplaceHistory(session, entry, previousEntry) {
+// 保存先を新しく切り替えるときに使う。既に記憶済みなら内容だけ更新し、
+// 新規で空きがあれば追加する。満杯(MAX_HISTORY件)の場合は、登録が最も古い項目
+// (registeredAtが最小のもの)を追い出して代わりにentryを記憶する。
+// registeredAtを持たない旧形式の項目は最も古いものとして扱う。
+function addOrReplaceHistory(session, entry) {
   const list = loadHistory(session);
   const key = historyKey(entry);
   const idx = list.findIndex((e) => historyKey(e) === key);
   if (idx >= 0) {
-    const merged = { ...list[idx], ...entry };
-    list.splice(idx, 1);
-    list.unshift(merged);
+    list[idx] = { ...list[idx], ...entry, registeredAt: list[idx].registeredAt };
     return saveHistory(session, list);
   }
-  if (list.length < MAX_HISTORY) {
-    list.unshift(entry);
-    return saveHistory(session, list);
+  if (list.length >= MAX_HISTORY) {
+    let oldestIdx = 0;
+    list.forEach((e, i) => {
+      if ((e.registeredAt || 0) < (list[oldestIdx].registeredAt || 0)) oldestIdx = i;
+    });
+    list.splice(oldestIdx, 1);
   }
-  const prevKey = previousEntry ? historyKey(previousEntry) : null;
-  const prevIdx = prevKey ? list.findIndex((e) => historyKey(e) === prevKey) : -1;
-  if (prevIdx >= 0) {
-    list.splice(prevIdx, 1);
-  } else {
-    list.pop(); // 直前の保存先が見つからない場合のフォールバック: いずれか1件を外す(表示順はsaveHistoryで昇順に整列される)
-  }
-  list.unshift(entry);
-  const capped = list.slice(0, MAX_HISTORY);
-  return saveHistory(session, capped);
+  list.push({ ...entry, registeredAt: nextRegisteredAt(list) });
+  return saveHistory(session, list);
 }
 
 module.exports = {
