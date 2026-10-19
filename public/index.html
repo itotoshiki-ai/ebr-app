@@ -101,12 +101,12 @@
 
           <hr />
           <p class="hint" title="選択肢はOneDriveの設定から取得します">
-            書類種別のみ自動抽出しています(領収書/請求書/見積書など)。他は入力してください。
+            授受区分(自社名の扱われ方から推定)と書類種別(領収書/請求書/見積書など)は自動抽出しています。他は入力してください。
           </p>
           <label>
             授受区分
             <select id="fieldExchangeTypeSelect" hidden></select>
-            <input type="text" id="fieldExchangeType" list="exchangeTypeChoicesList" placeholder="例: 受領 / 交付" required />
+            <input type="text" id="fieldExchangeType" list="exchangeTypeChoicesList" placeholder="例: 受領 / 発行" required />
             <datalist id="exchangeTypeChoicesList"></datalist>
           </label>
           <p id="exchangeTypeNoMatchHint" class="hint" hidden>選択肢にありません。プルダウンから選び直してください。</p>

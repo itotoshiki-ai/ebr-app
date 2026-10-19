@@ -164,7 +164,16 @@ function createChoiceField({ selectEl, textEl, datalistEl, noMatchHintEl, requir
     return choices.length > 0;
   }
 
-  return { setChoices, setValue, getValue, hasChoices, resetValue };
+  // 自動判定した値(「受領」「発行」)が選択肢にあればそれを返し、無ければ空にする
+  // (選択肢に無い値を入れて「選択肢にありません」の警告を出さないため)。
+  // 選択肢が無い(自由入力の)項目ならそのまま返す。
+  function findChoice(value) {
+    if (!value) return '';
+    if (choices.length === 0) return value;
+    return choices.find((c) => c === value) || '';
+  }
+
+  return { setChoices, setValue, getValue, hasChoices, resetValue, findChoice };
 }
 
 const vendorField = createChoiceField({
@@ -312,7 +321,7 @@ function sanitizeFileNamePartForPreview(value, fallback) {
 // サーバー側と同じ規則で、ファイル名の自動生成では取引先名から法人格(株式会社・(株)等)を除外する。
 // 取引先プロパティ(SharePoint列)には法人格付きのまま書き込むため、ファイル名専用の整形。
 const LEGAL_ENTITY_PATTERN =
-  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?)$/gi;
+  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?|Limited|PBC|PLC|LLP|GmbH|[GK]\.\s?K\.)$/gi;
 function stripLegalEntity(name) {
   if (name == null) return name;
   const original = String(name);
@@ -389,7 +398,7 @@ async function handleFile(file) {
     fieldDate.value = data.date || '';
     vendorField.setValue(data.vendor || '');
     fieldAmount.value = data.amount != null ? data.amount : '';
-    exchangeTypeField.setValue('');
+    exchangeTypeField.setValue(exchangeTypeField.findChoice(data.exchangeType));
     documentTypeField.setValue(data.documentType || '');
     fieldPeriodDate.value = '';
     exchangeMethodField.setValue('');

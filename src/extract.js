@@ -91,6 +91,14 @@ const ERA_START_YEAR = {
 // 日付より優先されてしまうことがあった)。
 // 既に採用した候補と範囲が重なる場合は追加しない(同じ文字列を複数の書式で二重に
 // 拾わないようにするため。呼び出し順が優先順位になる)。
+// 海外の請求書で使われる英語の月名(先頭3文字で判定。Sept/Septemberなども可)
+const EN_MONTH = '(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)';
+const EN_MONTHS = ['jan', 'feb', 'mar', 'apr', 'may', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec'];
+
+function englishMonthNumber(name) {
+  return EN_MONTHS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
+}
+
 function collectDateCandidates(text, candidates, pattern, toDate) {
   for (const m of text.matchAll(pattern)) {
     const formatted = toDate(m);
@@ -122,6 +130,22 @@ function extractDate(text) {
     candidates,
     /(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日/g,
     ([, year, month, day]) => formatDate(year, month, day)
+  );
+
+  // 英語表記: October 18, 2026 / Oct. 18th 2026
+  collectDateCandidates(
+    text,
+    candidates,
+    new RegExp(`\\b${EN_MONTH}[a-z]*\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?,?\\s+(\\d{4})(?!\\d)`, 'gi'),
+    ([, month, day, year]) => formatDate(year, englishMonthNumber(month), day)
+  );
+
+  // 英語表記(日が先): 18 October 2026 / 18 Oct, 2026
+  collectDateCandidates(
+    text,
+    candidates,
+    new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${EN_MONTH}[a-z]*\\.?,?\\s+(\\d{4})(?!\\d)`, 'gi'),
+    ([, day, month, year]) => formatDate(year, englishMonthNumber(month), day)
   );
 
   // 2026/03/01, 2026-03-01, 2026.03.01
@@ -158,17 +182,35 @@ function extractDate(text) {
 // 支払期限(請求書の「お支払期限」「振込期限」等)を探す。ファイル名の日付に優先的に使うため、
 // 取引年月日とは別に抽出する。ラベルの直後(同じ行の残り+次の2行)にある最初の有効な日付を採用し、
 // ラベルが無い・ラベル付近に日付が無い場合はnullを返す(呼び出し側で取引年月日にフォールバック)。
-const DUE_DATE_LABEL_PATTERN = /(?:お?支払い?|お?振込み?)\s*(?:期限|期日)/g;
+// 英語の請求書の「Date due」「Due date」「$22.00 USD due October 18, 2026」等にも対応する。
+const DUE_DATE_LABEL_PATTERN = /(?:お?支払い?|お?振込み?)\s*(?:期限|期日)|\bdue\b/gi;
 const DUE_DATE_LOOKAHEAD_LINES = 2;
 
 function extractDueDate(text) {
-  for (const m of text.matchAll(DUE_DATE_LABEL_PATTERN)) {
+  return findDateAfterLabel(text, DUE_DATE_LABEL_PATTERN, DUE_DATE_LOOKAHEAD_LINES);
+}
+
+function findDateAfterLabel(text, labelPattern, lookaheadLines) {
+  for (const m of text.matchAll(labelPattern)) {
     const after = text.slice(m.index + m[0].length);
-    const nearby = after.split('\n').slice(0, DUE_DATE_LOOKAHEAD_LINES + 1).join('\n');
+    const nearby = after.split('\n').slice(0, lookaheadLines + 1).join('\n');
     const date = extractDate(nearby);
     if (date) return date;
   }
   return null;
+}
+
+// 取引年月日には書類の発行日を使う。請求書には請求期間・サービス期間などの日付も並ぶため、
+// 単純に最初に出てくる日付を取ると期間の日付になることがある(AWSの請求書など)。
+// 発行日のラベルが無い・付近に日付が無い場合は、文書中で最初に出てくる日付にフォールバックする。
+// 英語の請求書は「Invoice number / Date of issue / Date due」の見出しの後に値がまとめて
+// 並ぶことがあるため、見出しの後3行まで見る。
+const ISSUE_DATE_LABEL_PATTERN =
+  /発行年?月?日|発行済み請求書|ご?請求日|請求書日付|Date\s+of\s+issue|Issue\s+date|Invoice\s+date|Date\s+issued/gi;
+const ISSUE_DATE_LOOKAHEAD_LINES = 3;
+
+function extractIssueDate(text) {
+  return findDateAfterLabel(text, ISSUE_DATE_LABEL_PATTERN, ISSUE_DATE_LOOKAHEAD_LINES) ?? extractDate(text);
 }
 
 function formatDate(year, month, day) {
@@ -190,18 +232,25 @@ const AMOUNT_KEYWORDS = [
   'お買い上げ合計', 'お買上げ合計', 'ご利用合計', '現計',
   'お会計', '合計', 'ご利用金額', '総額', 'お支払金額', '支払金額', 'お支払い', 'お支払',
   '税込合計', '決済金額',
+  // 海外の請求書(英語)。日本語のキーワードが見つからない場合のみ使われる。大文字小文字は区別しない
+  'Total excluding tax', 'Subtotal', 'Sub-total', 'Sub total',
+  'Amount due', 'Balance due', 'Total due', 'Grand total', 'Total',
 ];
 
 // 桁区切りの数字本体。OCRが「5, 770,000」のようにカンマの直後にだけ余分な
 // 半角スペースを入れることがあるため、その場合に限定して許容する
 // (カンマの直後という条件を付けないと、離れた場所にある無関係な数字同士が
 // 改行をまたいで連結してしまう重大なバグになるため、範囲を狭く限定している)。
-const NUMBER_BODY = '\\d(?:[\\d,]|(?<=,) (?=\\d))*\\d';
+// 海外の請求書の「$20.00」のような小数点以下2桁までの金額にも対応する。
+const NUMBER_BODY = '\\d(?:[\\d,]|(?<=,) (?=\\d))*\\d(?:\\.\\d{1,2}(?!\\d))?';
 
 // 通貨記号(¥/円/JPY)付きの金額を優先対象とし、数量・伝票番号・電話番号等の
 // 無関係な数字を誤って金額と判定しないようにする。JPYは英語表記の帳票や、
 // 「金額」欄の直後に改行して単独で書かれるケースがあるため\sで改行もまたぐ。
-const CURRENCY_TOKEN_PATTERN = new RegExp(`[¥￥]\\s*(${NUMBER_BODY})|(${NUMBER_BODY})\\s*(?:円|JPY)`);
+// 海外の請求書向けに$/€/£とUSD/EUR/GBPも通貨記号として扱う。「JPY 24,123」「USD 152.73」のように
+// 通貨コードが数字の前に付く書き方にも対応する。
+const CURRENCY_TOKEN_PATTERN = new RegExp(`(?:[¥￥$€£]|JPY|USD|EUR|GBP)\\s*(${NUMBER_BODY})|(${NUMBER_BODY})\\s*(?:円|JPY|USD|EUR|GBP)`);
+const YEN_TOKEN_PATTERN = new RegExp(`(?:[¥￥]|JPY)\\s*(${NUMBER_BODY})|(${NUMBER_BODY})\\s*(?:円|JPY)`);
 const BARE_NUMBER_PATTERN = new RegExp(`(${NUMBER_BODY})`);
 
 // 「126,000 (税抜)」のように、金額の直後に税抜であることを示す注記が
@@ -226,17 +275,21 @@ function matchAmountIn(str, pattern) {
 // 「小計 ¥500 消費税 ¥50 合計 ¥550」のように1行に複数の金額が並ぶ場合に、
 // キーワードより前にある無関係な金額を誤って拾わないようにするため。
 // 表形式のレイアウトで「ラベル行→金額行」が改行を挟んで並ぶ場合にも対応する。
-function findAmountNear(lines, index, keyword) {
+// yenOnlyの場合は円(¥/円/JPY)付きの金額だけを対象にし、通貨記号の無い数字は採用しない。
+function findAmountNear(lines, index, keyword, yenOnly) {
   const line = lines[index];
-  const idx = line.indexOf(keyword);
+  const idx = line.toLowerCase().indexOf(keyword.toLowerCase());
   const after = idx !== -1 ? line.slice(idx + keyword.length) : line;
   const nextLine = lines[index + 1] || '';
 
   // 優先度1: 通貨記号(¥/円)付きの金額(キーワードと同じ行→次の行の順)
   for (const candidate of [after, nextLine]) {
-    const amount = matchAmountIn(candidate, CURRENCY_TOKEN_PATTERN);
+    // 「1 USD = 150.5 JPY」のような換算レートの行は円の金額ではない
+    if (yenOnly && /rate|レート/i.test(candidate)) continue;
+    const amount = matchAmountIn(candidate, yenOnly ? YEN_TOKEN_PATTERN : CURRENCY_TOKEN_PATTERN);
     if (amount !== null) return amount;
   }
+  if (yenOnly) return null;
   // 優先度2: 通貨記号が無い場合でも、キーワード直後や次の行の数字は金額として採用する
   // (OCRが「円」を読み取れず記号が欠落するケースがあるため)
   for (const candidate of [after, nextLine]) {
@@ -264,7 +317,8 @@ function findTaxExcludedAmount(text, total) {
   let best = null;
   for (const n of numbers) {
     if (n >= total) continue;
-    const tax = total - n;
+    // 小数(ドル等)の引き算の誤差で numbers.has が外れないようセント単位に丸める
+    const tax = Math.round((total - n) * 100) / 100;
     const ratio = tax / n;
     if (ratio < TAX_RATIO_MIN || ratio > TAX_RATIO_MAX) continue;
     if (!numbers.has(tax)) continue;
@@ -281,22 +335,66 @@ function extractAmount(text) {
     if (amount !== null) return amount;
   }
 
-  const amount = extractAmountByKeyword(text);
+  // 外資系の日本法人の請求書などで円と外貨の両方が書かれている場合は、円の金額を優先する
+  if (text.search(FOREIGN_CURRENCY_TOKEN_PATTERN) !== -1) {
+    const yenAmount = extractAmountByKeyword(text, true);
+    if (yenAmount !== null) return findTaxExcludedAmount(text, yenAmount) ?? yenAmount;
+  }
+
+  const amount = extractAmountByKeyword(text, false);
   if (amount === null) return null;
-  return findTaxExcludedAmount(text, amount) ?? amount;
+  return convertForeignAmountToYen(text, findTaxExcludedAmount(text, amount) ?? amount);
 }
 
-function extractAmountByKeyword(text) {
+// 外貨(ドル等)の金額として文書中に書かれている数値の一覧
+const FOREIGN_CURRENCY_TOKEN_PATTERN = new RegExp(`(?:[$€£]|USD|EUR|GBP)\\s*(${NUMBER_BODY})|(${NUMBER_BODY})\\s*(?:USD|EUR|GBP)`, 'g');
+
+// 請求書に記載された円への換算レート。海外事業者の請求書には
+// 「JCT amount in JPY: ¥316 using a conversion rate of 158.19.」
+// 「Exchange rate: 1 USD = 158.19 JPY」「換算レート 158.19」のように書かれていることがある。
+const EXCHANGE_RATE_PATTERNS = [
+  /(?:conversion|exchange)\s+rate\s*(?:of|is|:)?\s*(?:1\s*(?:USD|EUR|GBP|[$€£])\s*=\s*)?(?:JPY|[¥￥])?\s*(\d+(?:\.\d+)?)/i,
+  /\b1\s*(?:USD|EUR|GBP|[$€£])\s*=\s*(?:JPY|[¥￥])?\s*(\d+(?:\.\d+)?)/i,
+  /(?:換算|為替|適用)\s*レート\s*[:：]?\s*(\d+(?:\.\d+)?)/,
+];
+// 外貨1単位あたりの円として妥当な範囲(他通貨間のレート 1.08 等を誤って使わないため)
+const EXCHANGE_RATE_MIN = 10;
+const EXCHANGE_RATE_MAX = 1000;
+
+function findExchangeRateToYen(text) {
+  for (const pattern of EXCHANGE_RATE_PATTERNS) {
+    const m = text.match(pattern);
+    if (!m) continue;
+    const rate = Number(m[1]);
+    if (rate >= EXCHANGE_RATE_MIN && rate <= EXCHANGE_RATE_MAX) return rate;
+  }
+  return null;
+}
+
+// 金額が外貨で書かれていて、請求書に換算レートの記載があれば円に換算する(1円未満は四捨五入)。
+// レートの記載が無い場合は換算せず、外貨の数値のまま返す(ネット上のレートは使わない方針)。
+function convertForeignAmountToYen(text, amount) {
+  const foreignAmounts = [...text.matchAll(FOREIGN_CURRENCY_TOKEN_PATTERN)]
+    .map((m) => parseAmountToken(m[1] || m[2]));
+  if (!foreignAmounts.includes(amount)) return amount;
+  const rate = findExchangeRateToYen(text);
+  return rate === null ? amount : Math.round(amount * rate);
+}
+
+// yenOnlyの場合は円付きの金額だけを探し、キーワードで見つからなくても最大値での代用はしない
+// (「JCT amount in JPY: ¥316」のような消費税額だけの円表記を取引金額と誤認しないため)。
+function extractAmountByKeyword(text, yenOnly) {
   const lines = text.split('\n');
 
   // キーワードを優先度順に走査し、最初に見つかった行の金額を採用する
   for (const keyword of AMOUNT_KEYWORDS) {
     for (let i = 0; i < lines.length; i += 1) {
-      if (!lines[i].includes(keyword)) continue;
-      const amount = findAmountNear(lines, i, keyword);
+      if (!lines[i].toLowerCase().includes(keyword.toLowerCase())) continue;
+      const amount = findAmountNear(lines, i, keyword, yenOnly);
       if (amount !== null) return amount;
     }
   }
+  if (yenOnly) return null;
 
   // キーワードが見つからない場合は、¥/円が付いた金額のうち最大値を採用
   const withCurrency = [...text.matchAll(new RegExp(CURRENCY_TOKEN_PATTERN, 'g'))]
@@ -310,12 +408,13 @@ function extractAmountByKeyword(text) {
 }
 
 const VENDOR_HINT_PATTERN =
-  /(株式会社|有限会社|合同会社|\(株\)|（株）|\(有\)|（有）|㈱|㈲|商店|薬局|クリニック|病院|ストア|マート)/;
+  /(株式会社|有限会社|合同会社|\(株\)|（株）|\(有\)|（有）|㈱|㈲|商店|薬局|クリニック|病院|ストア|マート|(?<![A-Za-z])(?:Inc|LLC|Ltd|Limited|PBC|Corp|Corporation|GmbH|PLC|LLP|Pty|Pte)\b\.?|(?<![A-Za-z])[GK]\.\s?K\.)/;
 
 // 「販売元」「発行元」等、取引先名の直前に付くことが多いラベル。存在する場合は
 // これを最優先の手がかりとする(請求書には自社・決済代行会社・実際の販売元など
 // 複数の会社名が登場することが多く、単純な最初/最長一致では取り違えやすいため)。
-const VENDOR_LABEL_KEYWORDS = ['販売元', '発行元', '差出人', 'お支払い先'];
+// 外資系(AWS等)の請求書の「サービスプロバイダー」「Service Provider」「Seller」も同様に扱う。
+const VENDOR_LABEL_KEYWORDS = ['販売元', '発行元', '差出人', 'お支払い先', 'サービスプロバイダー', 'Service Provider', 'Seller'];
 
 // 取引先名の末尾に付く敬称(御中/様/殿/各位)を除去する
 const HONORIFIC_SUFFIX_PATTERN = /\s*(御中|様|殿|各位)\s*$/;
@@ -345,6 +444,8 @@ function isValidVendorCandidate(line) {
   if (!VENDOR_HINT_PATTERN.test(line)) return false;
   if (line.replace(VENDOR_HINT_PATTERN, '').trim().length < 2) return false;
   if (line.includes('。') || line.length > 40) return false;
+  // メールアドレス・URLの行(support@example.inc 等)は会社名ではない
+  if (/@|https?:|www\./i.test(line)) return false;
   if (isOwnCompany(line)) return false;
   return true;
 }
@@ -398,17 +499,17 @@ function extractVendor(text) {
 // 書類上部などに現れる典型的な書類名から書類種別を推定する。
 // 複数該当しうる場合はより具体的なもの(見積書・納品書など)を優先する。
 const DOCUMENT_TYPE_PATTERNS = [
-  { label: '見積書', pattern: /見積書/ },
-  { label: '納品書', pattern: /納品書/ },
-  { label: '請求書', pattern: /請求書/ },
-  { label: '領収書', pattern: /領収書|レシート/ },
+  { label: '見積書', pattern: /見積書|Quotation|Estimate/i },
+  { label: '納品書', pattern: /納品書|Delivery\s*Note|Packing\s*(?:Slip|List)/i },
+  { label: '請求書', pattern: /請求書|Invoice/i },
+  { label: '領収書', pattern: /領収書|レシート|Receipt/i },
   { label: '契約書', pattern: /契約書/ },
-  { label: '注文書', pattern: /注文書|発注書/ },
+  { label: '注文書', pattern: /注文書|発注書|Purchase\s*Order/i },
   { label: '検収書', pattern: /検収書/ },
 ];
 
-// 「請求書番号」「品目・納品書番号」のような項目名の一部は書類種別の判定に使わない
-const DOCUMENT_TYPE_COMPOUND_SUFFIX = /^\s*(?:番号|No|NO|№)/;
+// 「請求書番号」「品目・納品書番号」「Invoice number」のような項目名の一部は書類種別の判定に使わない
+const DOCUMENT_TYPE_COMPOUND_SUFFIX = /^\s*(?:番号|No|NO|№)|^\s+(?:number|no\.?|#|date|id)\b/i;
 
 // 書類種別を判定する。1枚の書類に複数の種別名が登場すること(請求書の明細列に
 // 「納品書番号」がある等)があるため、パターンの並び順ではなく次の順で決める:
@@ -435,6 +536,39 @@ function extractDocumentType(text) {
   return earliest ? earliest.label : null;
 }
 
+// 授受区分(受領/発行)を、自社名(.envのOWN_COMPANY_NAME)の書かれ方だけで判定する
+// (文書中の「受領」「発行」等の文言は判定に使わない):
+//   - 自社名が無い                                  → 受領(相手が発行した書類)
+//   - 自社名のどれかが宛先として書かれている          → 受領
+//     (「御中/様/殿/各位」の敬称付き、または英語の請求書の「Bill to」等の宛先欄の直後)
+//   - 自社名はあるが、宛先として書かれた箇所が無い    → 発行
+const HONORIFIC_AFTER_NAME_PATTERN = /御中|様|殿|各位/;
+// 英語の請求書は宛先に敬称を付けないため、宛先欄の見出しの直後(2行以内)にあることで宛先と判断する
+const RECIPIENT_FIELD_PATTERN = /Bill(?:ed)?\s*to|Sold\s*to|Invoice\s*to/i;
+const RECIPIENT_FIELD_LOOKBACK_LINES = 2;
+const LEGAL_ENTITY_IN_NAME_PATTERN = /株式会社|有限会社|合同会社|[(（][株有][)）]|[㈱㈲]/g;
+
+function extractExchangeType(text) {
+  const ownName = process.env.OWN_COMPANY_NAME;
+  if (!ownName) return null;
+  // 「(株)ユリーカ」「ユリーカ御中」のように法人格の書き方が違っても見つけられるよう、法人格を除いた名前で探す
+  const coreName = ownName.replace(LEGAL_ENTITY_IN_NAME_PATTERN, '').trim() || ownName;
+  const lines = text.split('\n').map((l) => l.trim());
+
+  const ownIndexes = lines.map((l, i) => (l.includes(coreName) ? i : -1)).filter((i) => i !== -1);
+  if (ownIndexes.length === 0) return '受領';
+
+  const isAddressedToOwn = (i) => {
+    // 敬称は自社名と同じ行の後ろか、OCRで改行された次の行の先頭に付く
+    const rest = lines[i].slice(lines[i].indexOf(coreName) + coreName.length);
+    if (HONORIFIC_AFTER_NAME_PATTERN.test(rest)) return true;
+    if (/^(?:御中|様|殿|各位)/.test(lines[i + 1] || '')) return true;
+    const before = lines.slice(Math.max(0, i - RECIPIENT_FIELD_LOOKBACK_LINES), i).join('\n');
+    return RECIPIENT_FIELD_PATTERN.test(before);
+  };
+  return ownIndexes.some(isAddressedToOwn) ? '受領' : '発行';
+}
+
 // OCR結果に全角数字・全角カンマが含まれることがあるため、金額・日付の数値解析の前に半角へ統一する
 function normalizeOcrText(text) {
   return text
@@ -451,15 +585,16 @@ async function extractReceiptData({ base64Data, mimeType }) {
   const text = rawText ? normalizeOcrText(rawText) : '';
 
   if (!text) {
-    return { date: null, dueDate: null, vendor: null, amount: null, documentType: null };
+    return { date: null, dueDate: null, vendor: null, amount: null, documentType: null, exchangeType: null };
   }
 
   const result = {
-    date: extractDate(text),
+    date: extractIssueDate(text),
     dueDate: extractDueDate(text),
     vendor: extractVendor(text),
     amount: extractAmount(text),
     documentType: extractDocumentType(text),
+    exchangeType: extractExchangeType(text),
   };
 
   if (process.env.DEBUG_OCR === 'true') {

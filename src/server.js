@@ -89,7 +89,7 @@ function sanitizeFileNamePart(value, fallback) {
 // ファイル名の自動生成では取引先名から法人格(株式会社・(株)等)を除外する。
 // 取引先プロパティ(SharePoint列)には法人格付きのまま書き込むため、ファイル名専用の整形。
 const LEGAL_ENTITY_PATTERN =
-  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?)$/gi;
+  /株式会社|有限会社|合同会社|合資会社|合名会社|(?:一般|公益)(?:社団|財団)法人|特定非営利活動法人|NPO法人|医療法人(?:社団|財団)?|社会福祉法人|学校法人|宗教法人|地方独立行政法人|独立行政法人|国立大学法人|税理士法人|弁護士法人|監査法人|司法書士法人|行政書士法人|社会保険労務士法人|[(（](?:株|有|同|合|資|名|社|財|医|福|学|特非)[)）]|[㈱㈲㈳㈶]|,?\s*(?:Co\.,?\s*Ltd\.?|Inc\.?|Corp\.?|Corporation|LLC|Ltd\.?|Limited|PBC|PLC|LLP|GmbH|[GK]\.\s?K\.)$/gi;
 function stripLegalEntity(name) {
   if (name == null) return name;
   const original = String(name);
@@ -192,7 +192,7 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     const { buffer, mimetype, originalname } = req.file;
     const skipExtract = req.body.skipExtract === 'true';
     const extracted = skipExtract
-      ? { date: null, dueDate: null, vendor: null, amount: null, documentType: null }
+      ? { date: null, dueDate: null, vendor: null, amount: null, documentType: null, exchangeType: null }
       : await extractReceiptData({
           base64Data: buffer.toString('base64'),
           mimeType: mimetype,
