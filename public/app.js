@@ -78,6 +78,19 @@ let currentUploadId = null;
 let fileNameIsDefault = true;
 // 文字認識で見つかった支払期限(YYYY-MM-DD)。ファイル名の日付には取引年月日より優先して使う。
 let extractedDueDate = null;
+// 文字認識で見つかった期間(開始日・終了日)と締日(いずれもYYYY-MM-DDまたはnull)。
+// 書類種別に応じて「開始日または締日」欄の初期値を決めるのに使う。
+let extractedPeriod = { periodStart: null, periodEnd: null, closingDate: null };
+// 「開始日または締日」欄が自動設定の値のままかどうか。trueの間は書類種別・取引年月日の
+// 変更に追従して再設定し、ユーザーが手入力したらfalseにしてそれ以降は上書きしない。
+let periodDateIsDefault = true;
+
+// 画面の説明文(「開始日・締日のどちらを入力するか」)と同じ書類種別の分類
+const START_DATE_DOCUMENT_TYPES = [
+  '見積依頼書', '見積書', '基本契約書', '個別契約書', '覚書', '派遣先管理台帳', '派遣元管理台帳',
+  '就業条件明示書', '機密保持契約書', '注文書', '注文請書',
+];
+const CLOSING_DATE_DOCUMENT_TYPES = ['納品書', '検収書', '請求書', '領収書'];
 
 // SharePoint側の設定に応じて、入力欄を「選択式(自由入力不可)」「候補付き自由入力」
 // 「素の自由入力」に切り替える汎用ヘルパー。取引先・授受区分・書類種別・授受手段・
@@ -308,6 +321,8 @@ function resetToDropZone() {
   fieldRemarks.value = '';
   fieldFileName.value = '';
   fileNameIsDefault = true;
+  extractedPeriod = { periodStart: null, periodEnd: null, closingDate: null };
+  periodDateIsDefault = true;
   setExtractedDueDate(null);
 }
 
@@ -344,6 +359,54 @@ function buildDefaultFileNameBase(date, vendor) {
 function refreshDefaultFileNameIfUntouched() {
   if (!fileNameIsDefault) return;
   fieldFileName.value = buildDefaultFileNameBase(extractedDueDate || fieldDate.value, vendorField.getValue());
+}
+
+// 書類種別から「開始日」「締日」のどちらを入力するかを判定する(該当しない書類種別はnull)。
+// 自動抽出の書類種別は「契約書」とだけ判定されるため、末尾が「契約書」のものは開始日の書類として扱う。
+function periodDateKind(documentType) {
+  const type = (documentType || '').trim();
+  if (CLOSING_DATE_DOCUMENT_TYPES.includes(type)) return 'closing';
+  if (START_DATE_DOCUMENT_TYPES.includes(type) || type.endsWith('契約書')) return 'start';
+  return null;
+}
+
+// YYYY-MM-DDの日付文字列から、その月の1日・末日を作る
+function firstDayOfMonth(dateStr) {
+  return `${dateStr.slice(0, 7)}-01`;
+}
+function lastDayOfMonth(dateStr) {
+  const [year, month] = dateStr.split('-').map(Number);
+  const lastDay = new Date(year, month, 0).getDate();
+  return `${dateStr.slice(0, 7)}-${String(lastDay).padStart(2, '0')}`;
+}
+
+// 「開始日または締日」欄の初期値を決める:
+//   開始日の書類: 書類上の期間の開始日 → 無ければ対象月の1日
+//   締日の書類:   書類上の締日 → 期間の終了日 → 無ければ対象月の末日
+//                 (ただし前払い=期間の開始日が取引年月日以降の場合は、取引年月日の月の末日)
+// 対象月は書類上の期間があればその月、無ければ取引年月日の月。
+function computeDefaultPeriodDate() {
+  const kind = periodDateKind(documentTypeField.getValue());
+  if (!kind) return '';
+  const { periodStart, periodEnd, closingDate } = extractedPeriod;
+  if (kind === 'start') {
+    if (periodStart) return periodStart;
+    const targetDate = periodEnd || fieldDate.value;
+    return targetDate ? firstDayOfMonth(targetDate) : '';
+  }
+  if (closingDate) return closingDate;
+  // 後払いの請求書は利用期間の後に発行されるため、期間の開始日が取引年月日(発行日)以降なら前払いとみなす
+  const isPrepaid = periodStart && fieldDate.value && periodStart >= fieldDate.value;
+  if (isPrepaid) return lastDayOfMonth(fieldDate.value);
+  if (periodEnd) return periodEnd;
+  const targetDate = periodStart || fieldDate.value;
+  return targetDate ? lastDayOfMonth(targetDate) : '';
+}
+
+// 「開始日または締日」欄が自動設定の値のままであれば、現在の書類種別・取引年月日で再設定する
+function refreshDefaultPeriodDateIfUntouched() {
+  if (!periodDateIsDefault) return;
+  fieldPeriodDate.value = computeDefaultPeriodDate();
 }
 
 // 支払期限を記憶し、ファイル名の日付にどちらを使っているかをファイル名欄の下に表示する
@@ -400,7 +463,13 @@ async function handleFile(file) {
     fieldAmount.value = data.amount != null ? data.amount : '';
     exchangeTypeField.setValue(exchangeTypeField.findChoice(data.exchangeType));
     documentTypeField.setValue(data.documentType || '');
-    fieldPeriodDate.value = '';
+    extractedPeriod = {
+      periodStart: data.periodStart || null,
+      periodEnd: data.periodEnd || null,
+      closingDate: data.closingDate || null,
+    };
+    periodDateIsDefault = true;
+    fieldPeriodDate.value = computeDefaultPeriodDate();
     exchangeMethodField.setValue('');
     paymentMethodField.setValue('');
     fieldPaymentDate.value = '';
@@ -439,6 +508,15 @@ fieldVendor.addEventListener('input', refreshDefaultFileNameIfUntouched);
 fieldVendorSelect.addEventListener('change', refreshDefaultFileNameIfUntouched);
 fieldFileName.addEventListener('input', () => {
   fileNameIsDefault = false;
+});
+
+// 書類種別・取引年月日を変更したとき、「開始日または締日」欄がまだ自動設定の値のままなら
+// 再設定する(書類種別によって開始日・締日のどちらを入れるかが変わるため)。欄自体が編集されたら追従をやめる。
+fieldDocumentType.addEventListener('input', refreshDefaultPeriodDateIfUntouched);
+fieldDocumentTypeSelect.addEventListener('change', refreshDefaultPeriodDateIfUntouched);
+fieldDate.addEventListener('input', refreshDefaultPeriodDateIfUntouched);
+fieldPeriodDate.addEventListener('input', () => {
+  periodDateIsDefault = false;
 });
 
 cancelBtn.addEventListener('click', resetToDropZone);
@@ -615,6 +693,8 @@ async function refreshTargetFolder() {
       vendorField.setChoices(mapping && mapping.vendorChoices, mapping && mapping.vendorAllowsFreeText);
       exchangeTypeField.setChoices(mapping && mapping.exchangeTypeChoices, mapping && mapping.exchangeTypeAllowsFreeText);
       documentTypeField.setChoices(mapping && mapping.documentTypeChoices, mapping && mapping.documentTypeAllowsFreeText);
+      // 選択肢の入れ替えで書類種別の値が変わることがあるため、開始日/締日の自動設定値も合わせる
+      refreshDefaultPeriodDateIfUntouched();
       exchangeMethodField.setChoices(mapping && mapping.exchangeMethodChoices, mapping && mapping.exchangeMethodAllowsFreeText);
       paymentMethodField.setChoices(mapping && mapping.paymentMethodChoices, mapping && mapping.paymentMethodAllowsFreeText);
       journalStatusField.setChoices(mapping && mapping.journalStatusChoices, mapping && mapping.journalStatusAllowsFreeText);

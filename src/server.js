@@ -10,7 +10,7 @@ const multer = require('multer');
 
 const { registerAuthRoutes, getAccessToken } = require('./auth');
 const FileSessionStore = require('./session-store');
-const { extractReceiptData } = require('./extract');
+const { extractReceiptData, EMPTY_EXTRACTION } = require('./extract');
 const { embedMetadata, buildSummary } = require('./metadata');
 const {
   ensureFolderPath,
@@ -192,7 +192,7 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
     const { buffer, mimetype, originalname } = req.file;
     const skipExtract = req.body.skipExtract === 'true';
     const extracted = skipExtract
-      ? { date: null, dueDate: null, vendor: null, amount: null, documentType: null, exchangeType: null }
+      ? { ...EMPTY_EXTRACTION }
       : await extractReceiptData({
           base64Data: buffer.toString('base64'),
           mimeType: mimetype,
