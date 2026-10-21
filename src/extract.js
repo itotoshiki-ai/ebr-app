@@ -5,6 +5,7 @@
 // 画面上で確認・修正できるようにすること。
 
 const path = require('path');
+const { isInvoiceLookupEnabled, findRegistrationNumbers, lookupRegisteredNames } = require('./invoice-registry');
 
 const VISION_ENDPOINT = 'https://vision.googleapis.com/v1';
 
@@ -75,7 +76,7 @@ async function ocrPdf(base64Data) {
   const pageTexts = (fileResponse?.responses || [])
     .map((r) => r.fullTextAnnotation?.text || '')
     .filter(Boolean);
-  return pageTexts.join('\n');
+  return pageTexts;
 }
 
 // PDFに埋め込まれているテキストレイヤーを取り出す(PDF.jsを使用)。
@@ -103,7 +104,7 @@ async function extractPdfTextLayer(base64Data) {
     }).promise;
   } catch {
     // パスワード付き・破損PDF等はテキストレイヤー無しとして扱い、OCR結果だけを使う
-    return '';
+    return [];
   }
   try {
     const pageTexts = [];
@@ -111,7 +112,7 @@ async function extractPdfTextLayer(base64Data) {
       const { items } = await (await doc.getPage(p)).getTextContent();
       pageTexts.push(layoutTextItems(items));
     }
-    return pageTexts.join('\n');
+    return pageTexts;
   } finally {
     await doc.destroy();
   }
@@ -175,14 +176,15 @@ function countJapaneseChars(text) {
   return (text.match(/[぀-ヿ一-鿿]/g) || []).length;
 }
 
-async function readPdfText(base64Data) {
-  const [ocrText, layerText] = await Promise.all([ocrPdf(base64Data), extractPdfTextLayer(base64Data)]);
-  const layerJapanese = countJapaneseChars(layerText);
-  const ocrJapanese = countJapaneseChars(ocrText);
+// ページごとのテキストを返す(登録番号を1ページ目だけから探すため、ページの区切りを残す)
+async function readPdfPages(base64Data) {
+  const [ocrPages, layerPages] = await Promise.all([ocrPdf(base64Data), extractPdfTextLayer(base64Data)]);
+  const layerJapanese = countJapaneseChars(layerPages.join('\n'));
+  const ocrJapanese = countJapaneseChars(ocrPages.join('\n'));
   if (layerJapanese >= TEXT_LAYER_MIN_JAPANESE_CHARS && layerJapanese >= ocrJapanese * TEXT_LAYER_PREFERRED_RATIO) {
-    return layerText;
+    return layerPages;
   }
-  return ocrText;
+  return ocrPages;
 }
 
 const KANJI_DIGITS = '〇一二三四五六七八九';
@@ -191,6 +193,7 @@ const ERA_START_YEAR = {
   平成: 1988, // 平成1年 = 1989
   昭和: 1925, // 昭和1年 = 1926
 };
+const ERA_LETTERS = { R: '令和', H: '平成', S: '昭和' };
 
 // 各書式のパターンを文書全体から探し、電話番号や伝票番号がたまたま日付と同じ桁の並びに
 // マッチしても月や日の値が不正(13より大きい月など)であれば候補にしない。
@@ -278,6 +281,15 @@ function collectDates(text) {
     /(\d{1,2})[./-](\d{1,2})[./-](\d{4})/g,
     ([, month, day, year]) => formatDate(year, month, day)
   );
+
+  // 銀行の帳票等で使われる和暦の略記: R08.08.28 / R080828 (R=令和, H=平成, S=昭和)。
+  // 製品コード等の英字+数字と区別するため、英数字の直後に続くものは対象外にし、
+  // 区切り記号は年月日で揃っているか、6桁の数字だけの場合に限る
+  const eraLetterToDate = ([, letter, year, month, day]) =>
+    formatDate(ERA_START_YEAR[ERA_LETTERS[letter]] + parseInt(year, 10), month, day);
+  collectDateCandidates(text, candidates, /(?<![A-Za-z0-9])([RHS])\s?(\d{2})([./-])(\d{2})\3(\d{2})(?!\d)/g,
+    ([all, letter, year, , month, day]) => eraLetterToDate([all, letter, year, month, day]));
+  collectDateCandidates(text, candidates, /(?<![A-Za-z0-9])([RHS])(\d{2})(\d{2})(\d{2})(?!\d)/g, eraLetterToDate);
 
   // ラベル・区切り記号なしで「2014 06 03」のように空白区切りだけの表記にも対応する。
   // 他の書式より誤検出しやすいため、優先度は最も低く(重なる場合は他の書式を優先)し、
@@ -420,7 +432,26 @@ const ISSUE_DATE_LABEL_PATTERN =
 const ISSUE_DATE_LOOKAHEAD_LINES = 3;
 
 function extractIssueDate(text) {
-  return findDateAfterLabel(text, ISSUE_DATE_LABEL_PATTERN, ISSUE_DATE_LOOKAHEAD_LINES) ?? extractDate(text);
+  return findDateAfterLabel(text, ISSUE_DATE_LABEL_PATTERN, ISSUE_DATE_LOOKAHEAD_LINES) ?? extractDate(text) ?? extractEralessLabeledDate(text);
+}
+
+// 銀行の帳票では「納期限 08.09.10」「領収日 08-03-09」のように元号を省いた和暦(令和)だけが書かれていることがある。
+// 年が2桁だけの日付は他の数字と紛れやすいため、見出しと同じ行の後ろか直後(2行以内)の「YY.MM.DD」「YY-MM-DD」だけを対象にする
+const ERALESS_DATE_LABEL_PATTERN = /納\s*期\s*限|納付期限|領収日/;
+const ERALESS_DATE_PATTERN = /^(\d{2})([.\-/])(\d{2})\2(\d{2})$/;
+
+function extractEralessLabeledDate(text) {
+  const lines = text.split('\n').map((l) => l.trim());
+  for (let i = 0; i < lines.length; i += 1) {
+    const label = lines[i].match(ERALESS_DATE_LABEL_PATTERN);
+    if (!label) continue;
+    const sameLine = lines[i].slice(label.index + label[0].length).trim();
+    for (const candidate of [sameLine, ...lines.slice(i + 1, i + 3)]) {
+      const m = candidate.match(ERALESS_DATE_PATTERN);
+      if (m) return formatDate(ERA_START_YEAR.令和 + parseInt(m[1], 10), m[3], m[4]);
+    }
+  }
+  return null;
 }
 
 function formatDate(year, month, day) {
@@ -434,7 +465,9 @@ function formatDate(year, month, day) {
 // 取引金額は消費税抜きの金額を優先して採用する。そのため「税抜」「小計」「合計金額」
 // (見積書等で税抜の内訳合計として使われることが多い)を、税込である可能性が高い
 // 「ご請求金額」「御見積金額」「合計」等より先に検索する。
+// 融資の返済予定表等では、融資金額(借入額)を取引金額とする(償還額・利息額等より優先)。
 const AMOUNT_KEYWORDS = [
+  '融資金額',
   '税抜', '本体価格',
   '小計', '見積合計金額', '合計金額',
   'ご請求金額', '御請求金額', '請求金額',
@@ -555,6 +588,101 @@ function findTaxExcludedAmount(text, total) {
   return best;
 }
 
+// 「税抜金額 / 消費税額 / 税込金額」の表で、数値が見出しから離れて「255,198 / 25,519 / 280,717」のように
+// 連続した行に並んでいる場合の税抜金額と消費税額。
+// 税抜+消費税=税込が成り立ち、消費税率として妥当な行だけを採用する(複数あれば最大の税抜金額)。
+function findTaxBreakdownRow(text) {
+  if (!text.includes('税抜')) return null;
+  const values = text.split('\n').map((line) => {
+    const m = line.trim().match(new RegExp(`^${NUMBER_BODY}$`));
+    return m ? parseAmountToken(m[0]) : null;
+  });
+  let best = null;
+  for (let i = 0; i + 2 < values.length; i += 1) {
+    const [n, tax, total] = values.slice(i, i + 3);
+    if (n === null || tax === null || total === null) continue;
+    if (Math.round((n + tax) * 100) !== Math.round(total * 100)) continue;
+    const ratio = tax / n;
+    if (ratio < TAX_RATIO_MIN || ratio > TAX_RATIO_MAX) continue;
+    if (best === null || n > best.n) best = { n, tax };
+  }
+  return best;
+}
+
+// 「合計 ¥1,100 (税込) / うち消費税(10%) ¥100」のように、税込金額と内税の消費税額だけが書かれていて
+// 税抜金額そのものは書かれていない場合に、税込金額から消費税額を引いた税抜金額を返す。
+// ゴルフ場の領収書のように、消費税の見出しと金額の間に別の項目(利用税 ¥0 等)の金額が挟まることがあるため、
+// 見出しの後ろ数行の円の金額から、税率として妥当なものを探す。
+// 内税の書類であることを示す語が無い場合や、「税込金額+消費税額」が文書中にある場合
+// (=見つけた金額は税抜で、消費税は外税)は対象外とする。
+const INCLUDED_TAX_MARKER_PATTERN = /内税|(?:うち|内)\s*消費税|税込|消費税込/;
+const CONSUMPTION_TAX_LABEL_PATTERN = /消費税/;
+const INCLUDED_TAX_LOOKAHEAD_LINES = 3;
+
+function findAmountExcludingIncludedTax(text, total) {
+  if (!INCLUDED_TAX_MARKER_PATTERN.test(text)) return null;
+  const numbers = new Set(
+    [...text.matchAll(new RegExp(NUMBER_BODY, 'g'))].map((m) => parseAmountToken(m[0])).filter((n) => n !== null)
+  );
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    const m = lines[i].match(CONSUMPTION_TAX_LABEL_PATTERN);
+    // 「金額(消費税込)」「(税込・消費税 10%対象)」のような税込の注記は消費税額の見出しではない
+    if (!m || /税込|消費税込/.test(lines[i])) continue;
+    const candidates = [lines[i].slice(m.index + m[0].length), ...lines.slice(i + 1, i + 1 + INCLUDED_TAX_LOOKAHEAD_LINES)];
+    for (const candidate of candidates) {
+      const tax = matchAmountIn(candidate, YEN_TOKEN_PATTERN);
+      if (tax === null || tax >= total || numbers.has(total + tax)) continue;
+      const ratio = tax / (total - tax);
+      if (ratio >= TAX_RATIO_MIN && ratio <= TAX_RATIO_MAX) return total - tax;
+    }
+  }
+  return null;
+}
+
+const BILLED_AMOUNT_KEYWORDS =['ご請求金額', '御請求金額', '請求金額'];
+
+// 表の税抜金額に、非課税分(立替経費の入湯税等)を含めた金額を返す。
+// ご請求金額が税抜+消費税より大きければ、差額は非課税分なので「ご請求金額 - 消費税額」とする。
+function amountFromTaxBreakdown(text, breakdown) {
+  const lines = text.split('\n');
+  for (const keyword of BILLED_AMOUNT_KEYWORDS) {
+    for (let i = 0; i < lines.length; i += 1) {
+      if (!lines[i].includes(keyword)) continue;
+      const billed = findAmountNear(lines, i, keyword, false);
+      if (billed !== null && billed > breakdown.n + breakdown.tax) return billed - breakdown.tax;
+      if (billed !== null) return breakdown.n;
+    }
+  }
+  return breakdown.n;
+}
+
+// 銀行経由で税金を納付する「納付明細」の取引金額(合計 − 取扱手数料)。
+// 表の見出しが縦書きのため、OCRで「合」「計」が別々の行になる。最後の「合計」の後ろ数行の数字のうち最大のものを合計とし、
+// 「取扱手数料」の金額(円付き)があれば差し引く
+const TAX_PAYMENT_DOCUMENT_PATTERN = /納付明細/;
+const TAX_PAYMENT_TOTAL_LOOKAHEAD_LINES = 6;
+
+function findTaxPaymentAmount(text) {
+  if (!TAX_PAYMENT_DOCUMENT_PATTERN.test(text)) return null;
+  const totalLabels = [...text.matchAll(/合[ \t]*\n?[ \t]*計/g)];
+  if (totalLabels.length === 0) return null;
+  const last = totalLabels.at(-1);
+  const after = text.slice(last.index + last[0].length).split('\n').slice(1, 1 + TAX_PAYMENT_TOTAL_LOOKAHEAD_LINES);
+  const totals = after
+    .map((line) => line.trim().match(new RegExp(`^(${NUMBER_BODY})`)))
+    .filter(Boolean)
+    .map((m) => parseAmountToken(m[1]))
+    .filter((n) => n !== null);
+  if (totals.length === 0) return null;
+  const total = Math.max(...totals);
+
+  const lines = text.split('\n');
+  const feeIndex = lines.findIndex((l) => l.includes('取扱手数料'));
+  const fee = feeIndex === -1 ? null : findAmountNear(lines, feeIndex, '取扱手数料', true);
+  return fee !== null && fee < total ? total - fee : total;
+}
+
 function extractAmount(text) {
   // 「126,000 (税抜)」のように金額の直後に税抜の注記が付いている場合は最優先で採用する
   const beforeTaxMatch = text.match(AMOUNT_BEFORE_TAX_EXCLUDED_PATTERN);
@@ -562,6 +690,12 @@ function extractAmount(text) {
     const amount = parseAmountToken(beforeTaxMatch[1]);
     if (amount !== null) return amount;
   }
+
+  const breakdown = findTaxBreakdownRow(text);
+  if (breakdown !== null) return amountFromTaxBreakdown(text, breakdown);
+
+  const taxPayment = findTaxPaymentAmount(text);
+  if (taxPayment !== null) return taxPayment;
 
   // 外資系の日本法人の請求書などで円と外貨の両方が書かれている場合は、円の金額を優先する
   if (text.search(FOREIGN_CURRENCY_TOKEN_PATTERN) !== -1) {
@@ -571,7 +705,8 @@ function extractAmount(text) {
 
   const amount = extractAmountByKeyword(text, false);
   if (amount === null) return isZeroAmountDocument(text) ? 0 : null;
-  return convertForeignAmountToYen(text, findTaxExcludedAmount(text, amount) ?? amount);
+  const taxExcluded = findTaxExcludedAmount(text, amount) ?? findAmountExcludingIncludedTax(text, amount);
+  return convertForeignAmountToYen(text, taxExcluded ?? amount);
 }
 
 // 利用が無かった月の請求書(合計¥0)のように、通貨記号付きの金額がすべて0の場合は0円とする
@@ -644,7 +779,7 @@ function extractAmountByKeyword(text, yenOnly) {
 }
 
 const VENDOR_HINT_PATTERN =
-  /(株式会社|有限会社|合同会社|\(株\)|（株）|\(有\)|（有）|㈱|㈲|商店|薬局|クリニック|病院|ストア|マート|(?<![A-Za-z])(?:Inc|LLC|Ltd|Limited|PBC|Corp|Corporation|GmbH|PLC|LLP|Pty|Pte)\b\.?|(?<![A-Za-z])[GK]\.\s?K\.|(?<![A-Za-z])GK\b)/;
+  /(株式会社|有限会社|合同会社|\(株\)|（株）|\(有\)|（有）|㈱|㈲|商店|薬局|クリニック|病院|ゴルフ(?:クラブ|倶楽部)|カントリー(?:クラブ|倶楽部)|ストア|マート|(?<![A-Za-z])(?:Inc|LLC|Ltd|Limited|PBC|Corp|Corporation|GmbH|PLC|LLP|Pty|Pte)\b\.?|(?<![A-Za-z])[GK]\.\s?K\.|(?<![A-Za-z])GK\b)/;
 
 // 「販売元」「発行元」等、取引先名の直前に付くことが多いラベル。存在する場合は
 // これを最優先の手がかりとする(請求書には自社・決済代行会社・実際の販売元など
@@ -659,7 +794,8 @@ const VENDOR_LABEL_PREFIX_PATTERN = new RegExp(
 );
 
 // 取引先名の末尾に付く敬称(御中/様/殿/各位)を除去する
-const HONORIFIC_SUFFIX_PATTERN = /\s*(御中|様|殿|各位)\s*$/;
+// (OCRが「様」を異体字の「樣」と読むことがあるため、以降の敬称の判定ではどちらも扱う)
+const HONORIFIC_SUFFIX_PATTERN = /\s*(御中|様|樣|殿|各位)\s*$/;
 
 function stripHonorific(name) {
   return name.replace(HONORIFIC_SUFFIX_PATTERN, '').trim();
@@ -671,10 +807,12 @@ function escapeRegExp(str) {
 
 // 自社名(.envのOWN_COMPANY_NAME)を含む行は「取引先」候補から除外する。
 // 請求書の宛先(自社)を取引先として誤って採用しないようにするため。
+// OCRが「株式会社 ユリーカ」のように法人格と名前の間に空白を入れることがあるため、空白を無視して比べる。
 function isOwnCompany(line) {
   const ownName = process.env.OWN_COMPANY_NAME;
   if (!ownName) return false;
-  return new RegExp(escapeRegExp(ownName)).test(line);
+  const removeSpaces = (s) => s.replace(/[\s　]/g, '');
+  return removeSpaces(line).includes(removeSpaces(ownName));
 }
 
 // 会社/店舗を示す語(株式会社等)を含み、かつ以下のいずれにも該当しない行を
@@ -705,12 +843,42 @@ function findVendorNearLabel(lines) {
   return null;
 }
 
+// 郵便番号だけの行。OCRが「〒」を「T」「+」と読み違えることがあるため、それらも許容する
+const POSTAL_CODE_LINE_PATTERN = /^[〒T+]?\s*\d{3}-?\d{4}$/;
+// 個人の氏名らしい行(漢字の姓 + 空白任意 + 漢字・かなの名、例: 「武田 正利」)
+const PERSON_NAME_PATTERN = /^[一-鿿々]{1,4}[\s　]?[一-鿿々ぁ-んァ-ヶ]{1,4}$/;
+// 氏名と同じ字数の漢字だけでできた項目名(「作成基準日」「請求書」「登録番号」等)は氏名ではない
+const ITEM_LABEL_PATTERN = /[日表書]$|基準|番号|金額|住所|所在地|担当/;
+
+function findIndividualIssuer(lines) {
+  for (let i = 1; i < lines.length; i += 1) {
+    if (!POSTAL_CODE_LINE_PATTERN.test(lines[i])) continue;
+    const name = lines[i - 1];
+    // 姓と名の間の空白は、書類によって有無が異なるため取り除いて「武田正利」に揃える
+    if (PERSON_NAME_PATTERN.test(name) && !ITEM_LABEL_PATTERN.test(name) && !isOwnCompany(name)) {
+      return name.replace(/[\s　]/g, '');
+    }
+  }
+  return null;
+}
+
+// 社印や罫線に重なった「株式会社」をOCRが「*社」のように記号と断片で読んだもの(名称の前に付いた場合)
+const GARBLED_LEGAL_ENTITY_PREFIX_PATTERN = /^[*＊]+\s*(?:株?式?会?社)?\s*/;
+const BANK_NAME_PATTERN = /銀行|信用金庫|信用組合|労働金庫/;
+// 「〒100-8792 日本郵便株式会社」のように、発行元の郵便番号と名称が同じ行に読み取られた場合の先頭の郵便番号
+const LEADING_POSTAL_CODE_PATTERN = /^(?:〒\s*\d{3}-?\d{4}|\d{3}-\d{4})\s+/;
+
 function extractVendor(text) {
   const lines = text
     .split('\n')
     .map((l) => stripHonorific(l.trim()))
     .filter(Boolean);
-  const toVendorName = (line) => line.replace(VENDOR_LABEL_PREFIX_PATTERN, '').slice(0, 60);
+  const toVendorName = (line) =>
+    line
+      .replace(VENDOR_LABEL_PREFIX_PATTERN, '')
+      .replace(LEADING_POSTAL_CODE_PATTERN, '')
+      .replace(GARBLED_LEGAL_ENTITY_PREFIX_PATTERN, '')
+      .slice(0, 60);
 
   // 「販売元」等のラベルが明示されていれば、それを最優先で採用する
   const labeled = findVendorNearLabel(lines);
@@ -719,6 +887,17 @@ function extractVendor(text) {
   // ラベルが無い場合は、条件を満たす最初のヒント一致行を採用する
   const hinted = lines.find(isValidVendorCandidate);
   if (hinted) return toVendorName(hinted);
+
+  // 個人事業主の請求書は「株式会社」等の手がかりが無いため、発行者欄の「氏名 → 郵便番号 → 住所」の並びから氏名を探す
+  const individual = findIndividualIssuer(lines);
+  if (individual) return individual;
+
+  // 銀行等の金融機関が発行した領収書(手数料等)。請求書の振込先の銀行名を取引先と取り違えないよう、
+  // 会社名の手がかりが他に無い場合だけ使い、支店名や振込の案内が付いた行は除く
+  const bank = lines.find(
+    (l) => BANK_NAME_PATTERN.test(l) && !/支店|出張所|営業部|振込|口座/.test(l) && l.length <= 20 && !isOwnCompany(l)
+  );
+  if (bank) return toVendorName(bank);
 
   // それでも見つからなければ、レシート/請求書の先頭付近の行を採用(住所・電話番号などは除外)。
   // 日本国内の取引先名なら通常ひらがな・カタカナ・漢字のいずれかを含むはずなので、
@@ -742,9 +921,11 @@ function extractVendor(text) {
 // 書類上部などに現れる典型的な書類名から書類種別を推定する。
 // 複数該当しうる場合はより具体的なもの(見積書・納品書など)を優先する。
 const DOCUMENT_TYPE_PATTERNS = [
+  { label: '返済予定表', pattern: /返済予定表/ },
   { label: '見積書', pattern: /見積書|Quotation|Estimate/i },
   { label: '納品書', pattern: /納品書|Delivery\s*Note|Packing\s*(?:Slip|List)/i },
-  { label: '請求書', pattern: /請求書|Invoice/i },
+  // 税金の納付明細・納付書(銀行経由で納付する住民税等)も支払を求める書類として請求書に分類する
+  { label: '請求書', pattern: /請求書|Invoice|納付明細|納付書/i },
   { label: '領収書', pattern: /領収書|レシート|Receipt/i },
   { label: '契約書', pattern: /契約書/ },
   { label: '注文書', pattern: /注文書|発注書|Purchase\s*Order/i },
@@ -758,6 +939,7 @@ const DOCUMENT_TYPE_COMPOUND_SUFFIX = /^\s*(?:番号|No|NO|№)|^\s+(?:number|no
 // 「納品書番号」がある等)があるため、パターンの並び順ではなく次の順で決める:
 //   1. 種別名だけが書かれた行(=書類のタイトル。「請 求 書」「御請求書」も可)
 //   2. 項目名の一部(〜番号等)を除き、文書中で最も先に登場する種別名
+//   3. どれにも該当しなければ「その他」(SharePointの書類種別の選択肢にある)
 function extractDocumentType(text) {
   for (const line of text.split('\n')) {
     const title = line.replace(/[\s　]/g, '').replace(/^[御ご]/, '');
@@ -776,7 +958,7 @@ function extractDocumentType(text) {
       break;
     }
   }
-  return earliest ? earliest.label : null;
+  return earliest ? earliest.label : 'その他';
 }
 
 // 授受区分(受領/発行)を、自社名(.envのOWN_COMPANY_NAME)の書かれ方だけで判定する
@@ -786,7 +968,7 @@ function extractDocumentType(text) {
 //     (「御中/様/殿/各位」の敬称付き、または英語の請求書の「Bill to」等の宛先欄の直後)
 //   - 「発行者」「販売元」等の発行者欄に自社以外の会社が書かれている → 受領
 //   - 自社名はあるが、宛先として書かれた箇所が無い    → 発行
-const HONORIFIC_AFTER_NAME_PATTERN = /御中|様|殿|各位/;
+const HONORIFIC_AFTER_NAME_PATTERN = /御中|様|樣|殿|各位/;
 // 英語の請求書は宛先に敬称を付けないため、宛先欄の見出しの直後(2行以内)にあることで宛先と判断する
 // (AWSのTax Invoiceは宛先欄の見出しが「Address:」、Google Cloudの請求書は「請求先」の後に担当者名・自社名が続く。
 //  Amazonビジネスの適格請求書は「購入者住所」)
@@ -813,7 +995,10 @@ function extractExchangeType(text) {
     const rest = lines[i].slice(lines[i].indexOf(coreName) + coreName.length);
     if (HONORIFIC_AFTER_NAME_PATTERN.test(rest)) return true;
     for (let j = i + 1; j <= i + RECIPIENT_HONORIFIC_LOOKAHEAD_LINES && j < lines.length; j += 1) {
-      if (/^(?:御中|様|殿|各位)/.test(lines[j])) return true;
+      // OCRが敬称の前に1文字余分に読むこと(「力樣」等)があるため、3文字以内の短い行なら敬称を含むだけでよい
+      if (/^(?:御中|様|樣|殿|各位)/.test(lines[j]) || (lines[j].length <= 3 && HONORIFIC_AFTER_NAME_PATTERN.test(lines[j]))) {
+        return true;
+      }
       if (VENDOR_HINT_PATTERN.test(lines[j])) break;
     }
     const before = lines.slice(Math.max(0, i - RECIPIENT_FIELD_LOOKBACK_LINES), i).join('\n');
@@ -840,11 +1025,13 @@ function isIssuedByOtherCompany(lines, ownCoreName) {
   return false;
 }
 
-// OCR結果に全角数字・全角カンマが含まれることがあるため、金額・日付の数値解析の前に半角へ統一する
+// OCR結果に全角数字・全角カンマが含まれることがあるため、金額・日付の数値解析の前に半角へ統一する。
+// また、OCRが「税」を異体字の「稅」と読むことがあるため(「消費稅」等)、キーワードの判定前に統一する
 function normalizeOcrText(text) {
   return text
     .replace(/[０-９]/g, (c) => String.fromCharCode(c.charCodeAt(0) - 0xFEE0))
-    .replace(/，/g, ',');
+    .replace(/，/g, ',')
+    .replace(/稅/g, '税');
 }
 
 // 抽出できなかった(文字が無い・抽出をスキップした)場合の結果
@@ -858,15 +1045,31 @@ const EMPTY_EXTRACTION = Object.freeze({
   periodStart: null,
   periodEnd: null,
   closingDate: null,
+  // 取引先を登録番号からインボイスWeb-APIで取得した場合はその登録番号(画面に出典として表示する)
+  vendorRegistrationNumber: null,
 });
 
-async function extractReceiptData({ base64Data, mimeType }) {
+// 1ページ目に書かれた登録番号を照会し、自社以外で登録が有効な事業者の名称を、書類中の出現順で最初のものを返す。
+// 2ページ目以降は添付の領収書(宿泊先等)の登録番号であることが多いため使わない。
+async function findVendorByRegistrationNumber(firstPageText) {
+  if (!isInvoiceLookupEnabled()) return null;
+  const numbers = findRegistrationNumbers(firstPageText);
+  if (numbers.length === 0) return null;
+  const names = await lookupRegisteredNames(numbers);
+  const number = numbers.find((n) => names[n] && !isOwnCompany(names[n]));
+  return number ? { name: names[number], number } : null;
+}
+
+// allowRegistryLookup: 登録番号の照会(インボイスWeb-API)を行うか。公表情報の利用者を社員に限り、
+// 照会した人を記録できるよう、サインイン済みの利用者のときだけtrueにする
+async function extractReceiptData({ base64Data, mimeType, allowRegistryLookup = false }) {
   assertSupportedMime(mimeType);
 
-  const rawText = mimeType === 'application/pdf'
-    ? await readPdfText(base64Data)
-    : await ocrImage(base64Data);
-  const text = rawText ? normalizeOcrText(rawText) : '';
+  const pages = (mimeType === 'application/pdf'
+    ? await readPdfPages(base64Data)
+    : [await ocrImage(base64Data)]
+  ).map(normalizeOcrText);
+  const text = pages.filter(Boolean).join('\n');
 
   if (!text) {
     return { ...EMPTY_EXTRACTION };
@@ -874,10 +1077,12 @@ async function extractReceiptData({ base64Data, mimeType }) {
 
   const period = extractPeriod(text);
   const issueDate = extractIssueDate(text);
+  const registered = allowRegistryLookup ? await findVendorByRegistrationNumber(pages[0]) : null;
   const result = {
     date: issueDate,
     dueDate: extractDueDate(text),
-    vendor: extractVendor(text),
+    vendor: registered?.name ?? extractVendor(text),
+    vendorRegistrationNumber: registered?.number ?? null,
     amount: extractAmount(text),
     documentType: extractDocumentType(text),
     exchangeType: extractExchangeType(text),

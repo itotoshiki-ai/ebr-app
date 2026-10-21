@@ -16,6 +16,7 @@ const fieldVendor = document.getElementById('fieldVendor');
 const fieldVendorSelect = document.getElementById('fieldVendorSelect');
 const vendorChoicesList = document.getElementById('vendorChoicesList');
 const vendorNoMatchHint = document.getElementById('vendorNoMatchHint');
+const vendorSourceHint = document.getElementById('vendorSourceHint');
 const refreshVendorListBtn = document.getElementById('refreshVendorListBtn');
 const fieldAmount = document.getElementById('fieldAmount');
 const fieldExchangeType = document.getElementById('fieldExchangeType');
@@ -85,12 +86,12 @@ let extractedPeriod = { periodStart: null, periodEnd: null, closingDate: null };
 // 変更に追従して再設定し、ユーザーが手入力したらfalseにしてそれ以降は上書きしない。
 let periodDateIsDefault = true;
 
-// 画面の説明文(「開始日・締日のどちらを入力するか」)と同じ書類種別の分類
+// 画面の説明文(「開始日・締日のどちらを入力するか」)と同じ書類種別の分類。
+// ここに無い書類種別(「〜契約書」を除く)はすべて締日の書類として扱う
 const START_DATE_DOCUMENT_TYPES = [
-  '見積依頼書', '見積書', '基本契約書', '個別契約書', '覚書', '派遣先管理台帳', '派遣元管理台帳',
+  '見積依頼書', '見積書', '基本契約書', '個別契約書', '賃貸借契約書', '覚書', '派遣先管理台帳', '派遣元管理台帳',
   '就業条件明示書', '機密保持契約書', '注文書', '注文請書',
 ];
-const CLOSING_DATE_DOCUMENT_TYPES = ['納品書', '検収書', '請求書', '領収書'];
 
 // SharePoint側の設定に応じて、入力欄を「選択式(自由入力不可)」「候補付き自由入力」
 // 「素の自由入力」に切り替える汎用ヘルパー。取引先・授受区分・書類種別・授受手段・
@@ -324,6 +325,7 @@ function resetToDropZone() {
   extractedPeriod = { periodStart: null, periodEnd: null, closingDate: null };
   periodDateIsDefault = true;
   setExtractedDueDate(null);
+  setVendorSource(null);
 }
 
 // サーバー側のファイル名自動生成(取引先_日付)と同じ規則で、
@@ -361,13 +363,14 @@ function refreshDefaultFileNameIfUntouched() {
   fieldFileName.value = buildDefaultFileNameBase(extractedDueDate || fieldDate.value, vendorField.getValue());
 }
 
-// 書類種別から「開始日」「締日」のどちらを入力するかを判定する(該当しない書類種別はnull)。
+// 書類種別から「開始日」「締日」のどちらを入力するかを判定する(書類種別が未入力ならnull)。
 // 自動抽出の書類種別は「契約書」とだけ判定されるため、末尾が「契約書」のものは開始日の書類として扱う。
+// 開始日の書類以外は、その他も含めてすべて締日の書類とする。
 function periodDateKind(documentType) {
   const type = (documentType || '').trim();
-  if (CLOSING_DATE_DOCUMENT_TYPES.includes(type)) return 'closing';
+  if (!type) return null;
   if (START_DATE_DOCUMENT_TYPES.includes(type) || type.endsWith('契約書')) return 'start';
-  return null;
+  return 'closing';
 }
 
 // YYYY-MM-DDの日付文字列から、その月の1日・末日を作る
@@ -418,6 +421,17 @@ function setExtractedDueDate(dueDate) {
   fileNameDateHint.hidden = !extractedDueDate;
 }
 
+// 取引先を登録番号からインボイスWeb-APIで取得した場合は、取引先欄の下にその旨と出典を表示する
+// (Web-API機能の利用規約により、取得元と国税庁が保証したものではない旨の表示が必要)
+function setVendorSource(registrationNumber) {
+  vendorSourceHint.textContent = registrationNumber
+    ? `取引先は登録番号 ${registrationNumber} から取得しました。` +
+      'このサービスは、適格請求書発行事業者公表システムWeb-API機能を利用して取得した情報をもとに作成しているが、' +
+      'サービスの内容は国税庁によって保証されたものではない。'
+    : '';
+  vendorSourceHint.hidden = !registrationNumber;
+}
+
 async function handleFile(file) {
   if (!file) return;
   clearStatus();
@@ -460,6 +474,7 @@ async function handleFile(file) {
     currentUploadId = data.id;
     fieldDate.value = data.date || '';
     vendorField.setValue(data.vendor || '');
+    setVendorSource(data.vendorRegistrationNumber);
     fieldAmount.value = data.amount != null ? data.amount : '';
     exchangeTypeField.setValue(exchangeTypeField.findChoice(data.exchangeType));
     documentTypeField.setValue(data.documentType || '');

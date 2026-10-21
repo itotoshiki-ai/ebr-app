@@ -11,6 +11,7 @@ const multer = require('multer');
 const { registerAuthRoutes, getAccessToken } = require('./auth');
 const FileSessionStore = require('./session-store');
 const { extractReceiptData, EMPTY_EXTRACTION } = require('./extract');
+const { recordLookup } = require('./invoice-registry');
 const { embedMetadata, buildSummary } = require('./metadata');
 const {
   ensureFolderPath,
@@ -196,7 +197,15 @@ app.post('/api/extract', upload.single('file'), async (req, res) => {
       : await extractReceiptData({
           base64Data: buffer.toString('base64'),
           mimeType: mimetype,
+          allowRegistryLookup: Boolean(req.session.account),
         });
+    if (extracted.vendorRegistrationNumber) {
+      recordLookup({
+        username: req.session.account.username,
+        registrationNumber: extracted.vendorRegistrationNumber,
+        name: extracted.vendor,
+      });
+    }
 
     const id = crypto.randomUUID();
     pendingUploads.set(id, {
